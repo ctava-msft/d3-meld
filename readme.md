@@ -16,11 +16,6 @@
 - --clean-data            Backup existing Data then start fresh (less aggressive than force if already clean of partial files).
 - --gpus 0,1              Launch independent (non-MPI) runs on listed GPUs.
 
-## When to use --force-reinit
-Use only if:
-- You encountered OSError NetCDF: HDF error on block_000000.nc
-- You changed structural input and want a truly clean Data store
-Otherwise omit for faster startup.
 
 ## Troubleshooting
 - Check GPU visibility:
@@ -31,6 +26,17 @@ Otherwise omit for faster startup.
 grep 'Running replica exchange step ' ./remd.log | tail -n 40
 
 ## Compute Resources
+
+run_meld.py:
+
+Pure setup (build system, write DataStore). CPU-only is fine; GPU gives negligible benefit here.
+launch_remd_multiplex:
+
+Performs MD integration via OpenMM; this is the GPU‑intensive part.
+Nonbonded force calculations (even with implicit solvent) dominate cost and are 5–30× faster on CUDA GPUs vs CPU.
+Replica‑exchange bookkeeping (ladder/adaptor, state swaps) is light and not GPU critical.
+
+
 
 az ml compute create  --resource-group rg-mayo-2 --workspace-name mlw-1  --name meld-v100   --type amlcompute   --min-instances 0   --max-instances 40   --
 size Standard_NC6s_v3

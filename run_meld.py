@@ -15,8 +15,10 @@ import glob
 
 # Simulation configuration constants
 N_REPLICAS = 15          # Number of replicas used in REMD (alpha / temperature scaling)
-N_STEPS =   10          # Maximum number of exchange steps (passed to LeaderReplicaExchangeRunner)
-BLOCK_SIZE = 5           # DataStore block size for writing trajectory/state data
+N_STEPS =   10           # Maximum number of replica-exchange steps
+BLOCK_SIZE = 5           # DataStore block size (frames per NetCDF block)
+TIMESTEPS = 5000         # MD integration steps per exchange step (work chunk size)
+MINIMIZE_STEPS = 2000   # Energy minimization iterations prior to dynamics
 
 def gen_state(s, index):
     """Generate a MELD state for replica index with appropriately scaled alpha.
@@ -56,10 +58,10 @@ def exec_meld_run():
             seq[i]='HIS'
     print(seq)  # Optional: log normalized sequence
 
-    # Simulation run options: integration timesteps for initial build and minimization steps
+    # Simulation run options now use configurable constants
     options = meld.RunOptions(
-        timesteps = 25000,       # Total MD integration steps (distinct from N_STEPS which is exchange steps)
-        minimize_steps = 20000,  # Energy minimization prior to dynamics
+        timesteps=TIMESTEPS,        # from constant above
+        minimize_steps=MINIMIZE_STEPS,
     )
 
     # Create and initialize persistent DataStore.
