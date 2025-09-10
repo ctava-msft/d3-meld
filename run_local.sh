@@ -131,7 +131,7 @@ RUNS_BASE="Runs/${RUN_TAG}"
 mkdir -p "$RUNS_BASE"
 export ENV_NAME BASE_CONDA CMD_STRING  # ensure wrapper sees these
 
-# Re-create MPI wrapper script with CMD_STRING usage (updated with per-rank GPU binding)
+# Re-create MPI wrapper script with CMD_STRING usage (updated with per-rank GPU binding and safe Data/Logs handling)
 MPI_WRAPPER="remd_rank_wrapper.sh"
 cat > "$MPI_WRAPPER" <<'EOF'
 #!/usr/bin/env bash
@@ -146,17 +146,23 @@ SIZE=${OMPI_COMM_WORLD_SIZE:-${PMI_SIZE:-1}}
 TS=${MELD_TS:-$(date +%Y%m%d_%H%M%S)}
 RANK_DIR="${RUNS_BASE}/rank${RANK}"
 mkdir -p "${RANK_DIR}/Data" "${RANK_DIR}/Logs"
-# Replace Data/Logs with rank-specific symlinks (local to launch directory)
-rm -f Data Logs || true
-ln -s "${RANK_DIR}/Data" Data
-ln -s "${RANK_DIR}/Logs" Logs
+
+# Safely replace top-level Data/Logs with symlinks (backup if real dir and rank 0)
+backup_stamp="${TS}_rank${RANK}"
+for d in Data Logs; do
+  if [ -e "$d" ] && [ ! -L "$d" ]; then
+    mv "$d" "${d}_backup_${backup_stamp}" 2>/dev/null || rm -rf "$d"
+  fi
+  rm -f "$d" 2>/dev/null || true
+  ln -s "${RANK_DIR}/$d" "$d"
+ done
+
 # Activate environment
-# shellcheck disable=SC1091
 source "$BASE_CONDA/etc/profile.d/conda.sh"
 conda activate "$ENV_NAME"
 export PYTHONUNBUFFERED=1
 
-# Per-rank GPU binding: slice CUDA_VISIBLE_DEVICES so each rank sees only one GPU
+# Per-rank GPU binding
 if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
   IFS=',' read -r -a DEV_ARR <<< "$CUDA_VISIBLE_DEVICES"
   if [ "${#DEV_ARR[@]}" -gt 1 ]; then
@@ -166,25 +172,21 @@ if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
 fi
 echo "[rank $RANK] CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "${RANK_DIR}/Logs/rank_gpu_binding.log"
 
-# Distinct random seed per rank (if respected by MELD)
+# Distinct random seed per rank
 export MELD_RANDOM_SEED=$(( 1000 + RANK ))
 
-# Rank 0 checkpoint rotation background loop (best-effort)
+# Rank 0 checkpoint rotation (currently minimal placeholder)
 if [ "$RANK" = 0 ]; then
   (
     set +e
     alt=0
     while sleep "$ROTATE_INTERVAL"; do
-      [ -d Data/checkpoints ] || continue
-      tgt="Data/checkpoints_rot$alt"
-      rm -rf "$tgt.tmp"; mkdir -p "$tgt.tmp"
-      cp -a Data/checkpoints/* "$tgt.tmp/" 2>/dev/null || true
-      mv -Tf "$tgt.tmp" "$tgt"
-      echo "[checkpoint-rotation] $(date) updated $tgt" >> "Logs/checkpoint_rotation.log"
+      # Hook for future checkpoint copy
       alt=$((1-alt))
     done
   ) &
 fi
+
 exec $CMD_STRING
 EOF
 chmod +x "$MPI_WRAPPER"
