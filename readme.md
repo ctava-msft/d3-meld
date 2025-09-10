@@ -29,7 +29,13 @@ export OPENMM_CUDA_COMPILER=/path/to/cuda/bin/nvcc
 Example:
 export OPENMM_CUDA_COMPILER=/packages/apps/spack/18/opt/spack/gcc-12.1.0/cuda-11.8.0-a4e/bin/nvcc
 
-A detailed sbatch script is given for reference (md.sh)
+
+sudo apt install slurm-client
+sbatch md.sh
+
+
+nohup bash run_local.sh > run.log 2>&1 &
+
 
 Finally to run the simulation:
 launch_remd_multiplex --platform CUDA --debug
