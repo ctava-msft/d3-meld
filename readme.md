@@ -13,21 +13,12 @@
    python run_meld.py
 7. Launch REMD:
    launch_remd_multiplex --platform CUDA --debug
+nohup bash -lc "conda activate d3-meld-env && launch_remd_multiplex --platform CUDA --debug" > remd.log 2>&1 &
 
-### Installing meld (Linux / macOS ONLY)
-meld is not published for Windows on conda-forge. Use WSL2 or a Linux/macOS machine.
-To enable meld support:
-1. Edit conda.yaml and uncomment the line: - meld
-2. Recreate (or create a new) environment:
-   conda env create -f conda.yaml  # or: conda env update -f conda.yaml --prune
-3. Re-run the verification step above.
-
-(Do NOT explicitly install openmpi on Windows; mpi4py will select MS-MPI there automatically.)
-
-### Deprecated example (removed)
-Previously documented command (for reference only, not recommended to copy blindly):
-  conda install -c conda-forge openmm openmpi mpi4py meld
-This is now replaced by using the environment file; openmpi will be auto-resolved on Linux and should not be forced on Windows.
+Windows (PowerShell or CMD):
+- python -m venv .venv
+- .\.venv\Scripts\activate
+- pip install -r requirements.txt
 
 To run meld (after enabling it in the env):
 - python run_meld.py
