@@ -20,6 +20,7 @@ RUN_PIDS=()
 RUN_TAG="run"  # user-customizable grouping tag
 ROTATE_INTERVAL=600  # seconds between checkpoint rotation copies (rank 0 only)
 CLEAN_DATA=0
+FORCE_REINIT=0
 
 # Argument parsing (supports --gpus 0,1 or --gpus=0,1)
 ARGS=("$@")
@@ -42,6 +43,7 @@ while [ $i -lt $# ]; do
       i=$((i+1)); [ $i -lt $# ] || { echo "ERROR: --rotate-interval requires seconds" >&2; exit 1; }; ROTATE_INTERVAL="${ARGS[$i]}" ;;
     --rotate-interval=*) ROTATE_INTERVAL="${arg#--rotate-interval=}" ;;
     --clean-data) CLEAN_DATA=1 ;;
+    --force-reinit) FORCE_REINIT=1 ;;
     *.yml|*.yaml) ENV_FILE="$arg" ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
@@ -107,8 +109,14 @@ fi
 
 echo "OPENMM_CUDA_COMPILER=${OPENMM_CUDA_COMPILER:-unset}" >&2
 
-# One-time setup (idempotent if script handles existing outputs)
-if [ $CLEAN_DATA -eq 1 ]; then
+# One-time setup / cleanup
+if [ $FORCE_REINIT -eq 1 ]; then
+  TS_RI=$(date +%Y%m%d_%H%M%S)
+  echo "Force reinit: backing up Data -> Data_force_${TS_RI}" >&2
+  [ -d Data ] && mv Data "Data_force_${TS_RI}" 2>/dev/null || rm -rf Data || true
+  rm -rf Logs 2>/dev/null || true
+fi
+if [ $CLEAN_DATA -eq 1 ] && [ $FORCE_REINIT -eq 0 ]; then
   TS_CLEAN=$(date +%Y%m%d_%H%M%S)
   if [ -d Data ] || [ -f Data/data_store.dat ]; then
     echo "Cleaning existing Data (backup: Data_backup_${TS_CLEAN})" >&2
@@ -161,8 +169,12 @@ mkdir -p "${RANK_DIR}/Logs"
 # Diagnostics
 echo "[rank $RANK] START host=$(hostname) pwd=$(pwd) SIZE=$SIZE TS=$TS" >&2
 
-# Preserve shared Data & Logs at top-level; only create per-rank log dir
-# Ensure top-level Data exists (rank0 initializes if needed)
+# Activate environment early (needed for netCDF4)
+source "$BASE_CONDA/etc/profile.d/conda.sh"
+conda activate "$ENV_NAME"
+export PYTHONUNBUFFERED=1
+
+# Data initialization (rank 0)
 if [ "$RANK" = 0 ] && [ ! -d Data ]; then
   echo "[rank 0] Creating Data directory" >&2
   mkdir -p Data/Blocks
@@ -175,9 +187,10 @@ if [ "$RANK" = 0 ] && [ ! -f Data/data_store.dat ]; then
     echo "[rank 0] WARNING: run_meld.py not found" >&2
   fi
 fi
-# Simple barrier marker
+
+# Barrier marker
 if [ "$RANK" = 0 ]; then
-  if [ -f Data/data_store.dat ]; then echo ok > Data/.init_ready; fi
+  [ -f Data/data_store.dat ] && echo ok > Data/.init_ready
 else
   waited=0
   while [ ! -f Data/data_store.dat ] || [ ! -f Data/.init_ready ]; do
@@ -186,38 +199,51 @@ else
   done
 fi
 
-# Corruption check & cleanup (rank0 only)
-if [ "$RANK" = 0 ] && [ -f Data/Blocks/block_000000.nc ]; then
-  python - <<'PY'
+# Robust corruption check (rank0). Remove any zero-size or unreadable initial block file.
+if [ "$RANK" = 0 ]; then
+  if [ -f Data/Blocks/block_000000.nc ]; then
+    if [ ! -s Data/Blocks/block_000000.nc ]; then
+      echo "[rank 0] Removing zero-size block_000000.nc" >&2
+      rm -f Data/Blocks/block_000000.nc
+    else
+      python - <<'PY'
 import sys, os
 try:
  import netCDF4 as nc
  nc.Dataset('Data/Blocks/block_000000.nc').close()
 except Exception as e:
- print('[rank 0] Detected corrupt block_000000.nc, removing:', e, file=sys.stderr)
+ print('[rank 0] Corrupt block_000000.nc detected, removing:', e, file=sys.stderr)
  try:
   os.remove('Data/Blocks/block_000000.nc')
  except OSError:
   pass
 PY
-fi
-
-# Non-rank0 wait for first block file availability (size > 0)
-if [ "$RANK" != 0 ]; then
-  waited_blk=0
-  while { [ ! -s Data/Blocks/block_000000.nc ] && [ $waited_blk -lt 300 ]; }; do
-    sleep 2; waited_blk=$((waited_blk+2))
-  done
-  if [ ! -s Data/Blocks/block_000000.nc ]; then
-    echo "[rank $RANK] ERROR: block_000000.nc not ready after ${waited_blk}s" >&2
-    exit 1
+    fi
   fi
 fi
 
-# Activate environment
-source "$BASE_CONDA/etc/profile.d/conda.sh"
-conda activate "$ENV_NAME"
-export PYTHONUNBUFFERED=1
+# Non-rank0 wait for healthy first block (appears & readable) but do not block indefinitely.
+if [ "$RANK" != 0 ]; then
+  waited_blk=0
+  while [ $waited_blk -lt 300 ]; do
+    if [ -s Data/Blocks/block_000000.nc ]; then
+      python - <<'PY'
+import sys
+try:
+ import netCDF4 as nc
+ nc.Dataset('Data/Blocks/block_000000.nc').close()
+except Exception:
+ sys.exit(1)
+PY
+      rc=$?
+      if [ $rc -eq 0 ]; then break; fi
+    fi
+    sleep 2; waited_blk=$((waited_blk+2))
+  done
+  if [ $waited_blk -ge 300 ]; then
+    echo "[rank $RANK] WARNING: Proceeding without validated block_000000.nc after 300s" >&2
+  fi
+fi
 
 # GPU binding
 if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
