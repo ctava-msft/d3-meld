@@ -2,19 +2,23 @@
 set -euo pipefail
 
 # Local run helper (no Slurm). Usage:
-#   ./run_local.sh [conda_env_yaml] [--background] [--no-restart] [--gpus 0,1]
+#   ./run_local.sh [conda_env_yaml] [--background] [--no-restart] [--gpus 0,1] [--mpi-gpus 0,1]
 # Examples:
 #   ./run_local.sh                 # uses conda.yaml, foreground
 #   ./run_local.sh myenv.yaml      # custom env file
 #   ./run_local.sh --background    # run in background (nohup)
 #   ./run_local.sh myenv.yaml --background --no-restart
 #   ./run_local.sh --gpus 0,1      # launch one run on GPU0 and one on GPU1 (always background)
+#   ./run_local.sh --mpi-gpus 0,1  # single coordinated multi-GPU REMD via MPI (per-rank logs if supported)
 
 ENV_FILE=conda.yaml
 BACKGROUND=0
 DO_RESTART=1
-GPUS=""   # default empty; user specifies for multi-launch
-RUN_PIDS=()  # store PIDs for launched processes
+GPUS=""
+MPI_GPUS=""
+RUN_PIDS=()
+RUN_TAG="run"  # user-customizable grouping tag
+ROTATE_INTERVAL=600  # seconds between checkpoint rotation copies (rank 0 only)
 
 # Argument parsing (supports --gpus 0,1 or --gpus=0,1)
 ARGS=("$@")
@@ -25,16 +29,27 @@ while [ $i -lt $# ]; do
     --background) BACKGROUND=1 ;;
     --no-restart) DO_RESTART=0 ;;
     --gpus)
-      i=$((i+1))
-      [ $i -lt $# ] || { echo "ERROR: --gpus requires an argument" >&2; exit 1; }
-      GPUS="${ARGS[$i]}"
-      ;;
+      i=$((i+1)); [ $i -lt $# ] || { echo "ERROR: --gpus requires an argument" >&2; exit 1; }; GPUS="${ARGS[$i]}" ;;
     --gpus=*) GPUS="${arg#--gpus=}" ;;
+    --mpi-gpus)
+      i=$((i+1)); [ $i -lt $# ] || { echo "ERROR: --mpi-gpus requires an argument" >&2; exit 1; }; MPI_GPUS="${ARGS[$i]}" ;;
+    --mpi-gpus=*) MPI_GPUS="${arg#--mpi-gpus=}" ;;
+    --run-tag)
+      i=$((i+1)); [ $i -lt $# ] || { echo "ERROR: --run-tag requires a value" >&2; exit 1; }; RUN_TAG="${ARGS[$i]}" ;;
+    --run-tag=*) RUN_TAG="${arg#--run-tag=}" ;;
+    --rotate-interval)
+      i=$((i+1)); [ $i -lt $# ] || { echo "ERROR: --rotate-interval requires seconds" >&2; exit 1; }; ROTATE_INTERVAL="${ARGS[$i]}" ;;
+    --rotate-interval=*) ROTATE_INTERVAL="${arg#--rotate-interval=}" ;;
     *.yml|*.yaml) ENV_FILE="$arg" ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
   i=$((i+1))
 done
+
+if [ -n "$GPUS" ] && [ -n "$MPI_GPUS" ]; then
+  echo "ERROR: Use either --gpus or --mpi-gpus, not both." >&2
+  exit 1
+fi
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "ERROR: Environment file '$ENV_FILE' not found." >&2
@@ -111,41 +126,122 @@ if [ "$DO_RESTART" -eq 1 ] && [ -e Logs/remd_000.log ]; then
 fi
 
 CMD=(launch_remd_multiplex --platform CUDA --debug)
+RUNS_BASE="Runs/${RUN_TAG}"
+mkdir -p "$RUNS_BASE"
 
-# Multi-GPU launch block
+# Create MPI wrapper script (idempotent overwrite) for per-rank isolation
+MPI_WRAPPER="remd_rank_wrapper.sh"
+cat > "$MPI_WRAPPER" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+RANK=${OMPI_COMM_WORLD_RANK:-${PMI_RANK:-0}}
+SIZE=${OMPI_COMM_WORLD_SIZE:-${PMI_SIZE:-1}}
+: "${RUNS_BASE:?RUNS_BASE not set}"  # from parent
+: "${ENV_NAME:?ENV_NAME not set}"    # from parent
+: "${BASE_CONDA:?BASE_CONDA not set}" # from parent
+: "${ROTATE_INTERVAL:?ROTATE_INTERVAL not set}"
+TS=${MELD_TS:-$(date +%Y%m%d_%H%M%S)}
+RANK_DIR="${RUNS_BASE}/rank${RANK}"
+mkdir -p "${RANK_DIR}/Data" "${RANK_DIR}/Logs"
+# Replace Data/Logs with rank-specific symlinks (local to launch directory)
+rm -f Data Logs || true
+ln -s "${RANK_DIR}/Data" Data
+ln -s "${RANK_DIR}/Logs" Logs
+# Activate environment
+# shellcheck disable=SC1091
+source "$BASE_CONDA/etc/profile.d/conda.sh"
+conda activate "$ENV_NAME"
+export PYTHONUNBUFFERED=1
+# Distinct random seed per rank (if respected by MELD)
+export MELD_RANDOM_SEED=$(( 1000 + RANK ))
+# Rank 0 checkpoint rotation background loop (best-effort)
+if [ "$RANK" = 0 ]; then
+  (
+    set +e
+    alt=0
+    while sleep "$ROTATE_INTERVAL"; do
+      [ -d Data/checkpoints ] || continue
+      tgt="Data/checkpoints_rot$alt"
+      rm -rf "$tgt.tmp"; mkdir -p "$tgt.tmp"
+      cp -a Data/checkpoints/* "$tgt.tmp/" 2>/dev/null || true
+      mv -Tf "$tgt.tmp" "$tgt"
+      echo "[checkpoint-rotation] $(date) updated $tgt" >> "Logs/checkpoint_rotation.log"
+      alt=$((1-alt))
+    done
+  ) &
+fi
+exec "${CMD[@]}"
+EOF
+chmod +x "$MPI_WRAPPER"
+
+# Coordinated MPI multi-GPU mode
+if [ -n "$MPI_GPUS" ]; then
+  if ! command -v mpirun &>/dev/null; then
+    echo "ERROR: mpirun not found for --mpi-gpus mode." >&2; exit 1
+  fi
+  IFS=',' read -r -a MPI_GPU_LIST <<< "$MPI_GPUS"
+  NP=${#MPI_GPU_LIST[@]}
+  [ $NP -gt 1 ] || { echo "ERROR: --mpi-gpus needs at least 2 GPUs for benefit." >&2; exit 1; }
+  export CUDA_VISIBLE_DEVICES=$(IFS=,; echo "${MPI_GPU_LIST[*]}")
+  export MELD_ASSIGN_GPU_BY_RANK=1
+  export PYTHONUNBUFFERED=1
+  export RUNS_BASE RUN_TAG ROTATE_INTERVAL
+  export MELD_TS=$(date +%Y%m%d_%H%M%S)
+  LOG_PREFIX="${RUNS_BASE}/remd_mpi_${MELD_TS}"
+  echo "Launching coordinated MPI REMD (np=$NP) tag=$RUN_TAG into $RUNS_BASE" >&2
+  if mpirun --help 2>&1 | grep -q -- '--output-filename'; then
+    MPI_CMD="mpirun -np $NP --output-filename $LOG_PREFIX env RUNS_BASE=$RUNS_BASE ROTATE_INTERVAL=$ROTATE_INTERVAL MELD_TS=$MELD_TS $PWD/$MPI_WRAPPER"
+    echo "Per-rank logs: ${LOG_PREFIX}.0 ... ${LOG_PREFIX}.$((NP-1))" >&2
+    if [ "$BACKGROUND" -eq 1 ]; then
+      nohup bash -lc "$CONDA_ACTIVATE_CMD && $MPI_CMD" >/dev/null 2>&1 &
+      pid=$!; echo $pid > "${LOG_PREFIX}.pid"; echo "Started MPI run (PID $pid)" >&2
+    else
+      bash -lc "$CONDA_ACTIVATE_CMD && $MPI_CMD"
+    fi
+  else
+    COMBINED_LOG="${LOG_PREFIX}_combined.log"
+    MPI_CMD="mpirun -np $NP env RUNS_BASE=$RUNS_BASE ROTATE_INTERVAL=$ROTATE_INTERVAL MELD_TS=$MELD_TS $PWD/$MPI_WRAPPER"
+    if [ "$BACKGROUND" -eq 1 ]; then
+      nohup bash -lc "$CONDA_ACTIVATE_CMD && $MPI_CMD" > "$COMBINED_LOG" 2>&1 &
+      pid=$!; echo $pid > "${LOG_PREFIX}.pid"; echo "Started MPI run (PID $pid) -> $COMBINED_LOG" >&2
+    else
+      bash -lc "$CONDA_ACTIVATE_CMD && $MPI_CMD" | tee "$COMBINED_LOG"
+    fi
+  fi
+  exit 0
+fi
+
+# Independent multi-run block with per-GPU isolation
 if [ -n "$GPUS" ]; then
   IFS=',' read -r -a GPU_LIST <<< "$GPUS"
   if [ "${#GPU_LIST[@]}" -gt 1 ]; then
-    echo "Launching ${#GPU_LIST[@]} runs (one per GPU): $GPUS" >&2
+    echo "Launching ${#GPU_LIST[@]} independent runs tag=$RUN_TAG base=$RUNS_BASE" >&2
     TS=$(date +%Y%m%d_%H%M%S)
     for gpu in "${GPU_LIST[@]}"; do
-      gpu_trim="${gpu// /}"  # remove spaces
-      LOG=remd_gpu${gpu_trim}_${TS}.log
-      nohup bash -lc "$CONDA_ACTIVATE_CMD && CUDA_VISIBLE_DEVICES=$gpu_trim ${CMD[*]}" > "$LOG" 2>&1 &
-      pid=$!
-      RUN_PIDS+=($pid)
-      echo " GPU $gpu_trim -> $LOG (PID $pid)" >&2
+      gpu_trim="${gpu// /}"
+      SUBDIR="$RUNS_BASE/gpu${gpu_trim}_${TS}"
+      mkdir -p "$SUBDIR"
+      LOG="$SUBDIR/remd_gpu${gpu_trim}.log"
+      ( nohup bash -lc "$CONDA_ACTIVATE_CMD && cd $SUBDIR && ln -s ../..//Data Data 2>/dev/null || true; CUDA_VISIBLE_DEVICES=$gpu_trim ${CMD[*]}" > "$LOG" 2>&1 & echo $! > "$SUBDIR/pid" )
+      echo " GPU $gpu_trim -> $LOG (PID $(cat "$SUBDIR/pid"))" >&2
     done
-    PID_FILE="remd_multi_${TS}.pids"
-    printf "%s\n" "${RUN_PIDS[@]}" > "$PID_FILE"
-    echo "Launched all GPU runs. PID list: ${RUN_PIDS[*]} (saved to $PID_FILE)" >&2
     exit 0
   else
-    # Single GPU specified; run as normal with CUDA_VISIBLE_DEVICES
     export CUDA_VISIBLE_DEVICES="${GPU_LIST[0]}"
-    echo "Using GPU ${GPU_LIST[0]}" >&2
+    echo "Using GPU ${GPU_LIST[0]} (single run)" >&2
   fi
 fi
 
+# Background single run (optional) - place in tagged directory
 if [ "$BACKGROUND" -eq 1 ]; then
-  LOG=remd_$(date +%Y%m%d_%H%M%S).log
-  echo "Starting in background -> $LOG" >&2
-  nohup bash -lc "$CONDA_ACTIVATE_CMD && ${CMD[*]}" > "$LOG" 2>&1 &
-  pid=$!
-  PID_FILE="remd_single_${LOG%.log}.pid"
-  echo $pid > "$PID_FILE"
-  echo "PID $pid (saved to $PID_FILE)" >&2
+  TS=$(date +%Y%m%d_%H%M%S)
+  SUBDIR="$RUNS_BASE/single_${TS}"
+  mkdir -p "$SUBDIR"
+  LOG="$SUBDIR/remd.log"
+  echo "Starting single background run tag=$RUN_TAG dir=$SUBDIR" >&2
+  nohup bash -lc "$CONDA_ACTIVATE_CMD && cd $SUBDIR && ${CMD[*]}" > "$LOG" 2>&1 &
+  pid=$!; echo $pid > "$SUBDIR/pid"; echo "PID $pid" >&2
 else
-  echo "Running in foreground: ${CMD[*]}" >&2
+  echo "Running in foreground tag=$RUN_TAG: ${CMD[*]}" >&2
   "${CMD[@]}"
 fi
