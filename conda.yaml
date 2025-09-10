@@ -1,4 +1,4 @@
-name: d3-meld-env
+name: d3-meld-2-env
 channels:
   - conda-forge
   - bioconda
