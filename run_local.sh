@@ -138,43 +138,24 @@ cat > "$MPI_WRAPPER" <<'EOF'
 set -euo pipefail
 RANK=${OMPI_COMM_WORLD_RANK:-${PMI_RANK:-0}}
 SIZE=${OMPI_COMM_WORLD_SIZE:-${PMI_SIZE:-1}}
-: "${RUNS_BASE:?RUNS_BASE not set}"  # from parent
-: "${ENV_NAME:?ENV_NAME not set}"    # from parent
-: "${BASE_CONDA:?BASE_CONDA not set}" # from parent
+: "${RUNS_BASE:?RUNS_BASE not set}"
+: "${ENV_NAME:?ENV_NAME not set}"
+: "${BASE_CONDA:?BASE_CONDA not set}"
 : "${ROTATE_INTERVAL:?ROTATE_INTERVAL not set}"
 : "${CMD_STRING:?CMD_STRING not set}"
 TS=${MELD_TS:-$(date +%Y%m%d_%H%M%S)}
 RANK_DIR="${RUNS_BASE}/rank${RANK}"
-mkdir -p "${RANK_DIR}/Data" "${RANK_DIR}/Logs"
+mkdir -p "${RANK_DIR}/Logs"
 
-# Safely replace top-level Data/Logs with symlinks (do NOT delete original contents before seeding)
-backup_stamp="${TS}_rank${RANK}"
-for d in Data Logs; do
-  if [ -e "$d" ] && [ ! -L "$d" ]; then
-    # Seed per-rank directory with existing contents (if any) once.
-    if [ -d "$d" ]; then
-      cp -a "$d"/. "${RANK_DIR}/$d"/ 2>/dev/null || true
-    fi
-  fi
-  # Replace top-level path with symlink to per-rank copy (remove if symlink/file)
-  if [ -L "$d" ] || [ -f "$d" ]; then
-    rm -f "$d"
-  elif [ -d "$d" ] && [ ! -L "$d" ]; then
-    # Keep original directory only for rank 0 backup, then remove (others may race -> ignore errors)
-    if [ "$RANK" = 0 ]; then
-      mv "$d" "${d}_backup_${backup_stamp}" 2>/dev/null || true
-    fi
-    rm -rf "$d" 2>/dev/null || true
-  fi
-  ln -s "${RANK_DIR}/$d" "$d"
- done
+# Diagnostics
+echo "[rank $RANK] START host=$(hostname) pwd=$(pwd) SIZE=$SIZE TS=$TS" >&2
 
-# Activate environment
-source "$BASE_CONDA/etc/profile.d/conda.sh"
-conda activate "$ENV_NAME"
-export PYTHONUNBUFFERED=1
-
-# Lazy initialization of MELD Data store (rank 0 only) if missing
+# Preserve shared Data & Logs at top-level; only create per-rank log dir
+# Ensure top-level Data exists (rank0 initializes if needed)
+if [ "$RANK" = 0 ] && [ ! -d Data ]; then
+  echo "[rank 0] Creating Data directory" >&2
+  mkdir -p Data
+fi
 if [ "$RANK" = 0 ] && [ ! -f Data/data_store.dat ]; then
   echo "[rank 0] Initializing MELD data store via run_meld.py" >&2
   if [ -f run_meld.py ]; then
@@ -183,42 +164,54 @@ if [ "$RANK" = 0 ] && [ ! -f Data/data_store.dat ]; then
     echo "[rank 0] WARNING: run_meld.py not found" >&2
   fi
 fi
-# All ranks wait (bounded) for data_store.dat
-wait_seconds=0
-while [ ! -f Data/data_store.dat ] && [ $wait_seconds -lt 180 ]; do
-  sleep 2
-  wait_seconds=$((wait_seconds+2))
-  if [ $RANK -eq 0 ] && [ $((wait_seconds % 20)) -eq 0 ]; then
-    echo "[rank 0] Waiting for Data/data_store.dat (elapsed ${wait_seconds}s)" >&2
+
+# Barrier (file-based): rank0 drops marker when data_store.dat present
+if [ "$RANK" = 0 ]; then
+  if [ -f Data/data_store.dat ]; then
+    echo "ok" > Data/.init_ready
   fi
-done
-if [ ! -f Data/data_store.dat ]; then
-  echo "[rank $RANK] ERROR: Data/data_store.dat not found after waiting ${wait_seconds}s" >&2
-  exit 1
+else
+  waited=0
+  while [ ! -f Data/data_store.dat ] || [ ! -f Data/.init_ready ]; do
+    sleep 1
+    waited=$((waited+1))
+    if [ $waited -ge 180 ]; then
+      echo "[rank $RANK] ERROR: Timeout waiting for data_store.dat" >&2
+      exit 1
+    fi
+  done
 fi
 
-# Per-rank GPU binding
+# Activate environment
+source "$BASE_CONDA/etc/profile.d/conda.sh"
+conda activate "$ENV_NAME"
+export PYTHONUNBUFFERED=1
+
+# GPU binding
 if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
   IFS=',' read -r -a DEV_ARR <<< "$CUDA_VISIBLE_DEVICES"
   if [ "${#DEV_ARR[@]}" -gt 1 ]; then
-    SELECTED="${DEV_ARR[$(( RANK % ${#DEV_ARR[@]} ))]}"
-    export CUDA_VISIBLE_DEVICES="$SELECTED"
+    export CUDA_VISIBLE_DEVICES="${DEV_ARR[$(( RANK % ${#DEV_ARR[@]} ))]}"
   fi
 fi
 echo "[rank $RANK] CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "${RANK_DIR}/Logs/rank_gpu_binding.log"
 
-# Distinct random seed per rank
+# Distinct random seed
 export MELD_RANDOM_SEED=$(( 1000 + RANK ))
 
-# Rank 0 checkpoint rotation (currently minimal placeholder)
+# Lightweight checkpoint rotation placeholder (rank0 only)
 if [ "$RANK" = 0 ]; then
   (
     set +e
-    alt=0
-    while sleep "$ROTATE_INTERVAL"; do
-      alt=$((1-alt))
-    done
+    while sleep "$ROTATE_INTERVAL"; do :; done
   ) &
+fi
+
+# Redirect stdout/err into per-rank log if not already separated by mpirun
+if [ -z "${MPI_STDOUT_REDIRECTED:-}" ]; then
+  LOG_FILE="${RANK_DIR}/Logs/remd_rank${RANK}.log"
+  echo "[rank $RANK] Logging to $LOG_FILE" >&2
+  exec >>"$LOG_FILE" 2>&1
 fi
 
 exec $CMD_STRING
