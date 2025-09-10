@@ -14,9 +14,9 @@ from openmm import unit as u
 import glob
 
 # Simulation configuration constants
-N_REPLICAS = 30          # Number of replicas used in REMD (alpha / temperature scaling)
-N_STEPS = 20000          # Maximum number of exchange steps (passed to LeaderReplicaExchangeRunner)
-BLOCK_SIZE = 50          # DataStore block size for writing trajectory/state data
+N_REPLICAS = 15          # Number of replicas used in REMD (alpha / temperature scaling)
+N_STEPS =  2000          # Maximum number of exchange steps (passed to LeaderReplicaExchangeRunner)
+BLOCK_SIZE = 5           # DataStore block size for writing trajectory/state data
 
 def gen_state(s, index):
     """Generate a MELD state for replica index with appropriately scaled alpha.

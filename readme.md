@@ -7,8 +7,7 @@
 4. Run meld setup script:
    python run_meld.py
 5. Run simulation (coordinated multi-GPU REMD via MPI):
-   # Standard shared Blocks (default); suitable if no prior NetCDF corruption
-   nohup bash -lc "./run_local.sh --mpi-gpus 0,1 --scratch-blocks" > remd_mpi_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+   ```nohup bash -lc "./run_local.sh --mpi-gpus 0,1 --scratch-blocks" > remd_mpi_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
 ## Flag summary (selected)
 - --mpi-gpus 0,1          Run coordinated REMD across listed GPUs.
@@ -26,9 +25,16 @@ Otherwise omit for faster startup.
 ## Troubleshooting
 - Check GPU visibility:
   nvidia-smi
-- NetCDF: HDF error on block_000000.nc:
-  1) Stop run.
-  2) Relaunch with: --scratch-blocks --force-reinit (once).
-  3) Subsequent runs: keep --scratch-blocks (omit --force-reinit) unless error returns.
-- Stalled progress (step not advancing): verify both rank logs updating and GPU utilization ~>80%.
-- To discard partial run outputs but keep a backup: use --clean-data instead of --force-reinit.
+
+## H100 - Resources
+
+Standard_NC80adis_H100_v5 has 2x H100 NVL (≈94–95 GB each), 80 vCPUs total, 640 GB RAM.
+Approx per‑GPU share (just a planning heuristic):
+
+vCPUs: 40 per GPU
+RAM: 320 GB per GPU
+GPU memory: ~95 GB per GPU (reported 95,830 MiB)
+Local (ephemeral) disk 256 GB is shared; no fixed per‑GPU split (treat as common scratch)
+Practical guidance:
+
+Run one main simulation rank per GPU; if using OpenMM / MELD with minor CPU helpers set OMP_NUM_THREADS (or MKL_NUM_THREADS) to 8–16, not full 40, to leave headroom for I/O and the other rank.
