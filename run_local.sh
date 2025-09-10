@@ -13,7 +13,7 @@ set -euo pipefail
 ENV_FILE=conda.yaml
 BACKGROUND=0
 DO_RESTART=1
-GPUS="0,1"   # comma-separated list triggers multi-launch
+GPUS=""   # default empty; user specifies for multi-launch
 RUN_PIDS=()  # store PIDs for launched processes
 
 # Argument parsing (supports --gpus 0,1 or --gpus=0,1)
@@ -61,6 +61,8 @@ else
   # shellcheck disable=SC1091
   source "$(conda info --base)/etc/profile.d/conda.sh"
 fi
+BASE_CONDA="$(conda info --base)"
+CONDA_ACTIVATE_CMD="source $BASE_CONDA/etc/profile.d/conda.sh; conda activate $ENV_NAME"
 
 # Create env if missing
 if ! conda env list | awk '{print $1}' | grep -Fxq "$ENV_NAME"; then
@@ -119,7 +121,7 @@ if [ -n "$GPUS" ]; then
     for gpu in "${GPU_LIST[@]}"; do
       gpu_trim="${gpu// /}"  # remove spaces
       LOG=remd_gpu${gpu_trim}_${TS}.log
-      nohup bash -lc "conda activate $ENV_NAME && CUDA_VISIBLE_DEVICES=$gpu_trim ${CMD[*]}" > "$LOG" 2>&1 &
+      nohup bash -lc "$CONDA_ACTIVATE_CMD && CUDA_VISIBLE_DEVICES=$gpu_trim ${CMD[*]}" > "$LOG" 2>&1 &
       pid=$!
       RUN_PIDS+=($pid)
       echo " GPU $gpu_trim -> $LOG (PID $pid)" >&2
@@ -138,7 +140,7 @@ fi
 if [ "$BACKGROUND" -eq 1 ]; then
   LOG=remd_$(date +%Y%m%d_%H%M%S).log
   echo "Starting in background -> $LOG" >&2
-  nohup bash -lc "conda activate $ENV_NAME && ${CMD[*]}" > "$LOG" 2>&1 &
+  nohup bash -lc "$CONDA_ACTIVATE_CMD && ${CMD[*]}" > "$LOG" 2>&1 &
   pid=$!
   PID_FILE="remd_single_${LOG%.log}.pid"
   echo $pid > "$PID_FILE"
