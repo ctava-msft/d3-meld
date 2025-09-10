@@ -19,6 +19,7 @@ MPI_GPUS=""
 RUN_PIDS=()
 RUN_TAG="run"  # user-customizable grouping tag
 ROTATE_INTERVAL=600  # seconds between checkpoint rotation copies (rank 0 only)
+CLEAN_DATA=0
 
 # Argument parsing (supports --gpus 0,1 or --gpus=0,1)
 ARGS=("$@")
@@ -40,6 +41,7 @@ while [ $i -lt $# ]; do
     --rotate-interval)
       i=$((i+1)); [ $i -lt $# ] || { echo "ERROR: --rotate-interval requires seconds" >&2; exit 1; }; ROTATE_INTERVAL="${ARGS[$i]}" ;;
     --rotate-interval=*) ROTATE_INTERVAL="${arg#--rotate-interval=}" ;;
+    --clean-data) CLEAN_DATA=1 ;;
     *.yml|*.yaml) ENV_FILE="$arg" ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
@@ -106,6 +108,15 @@ fi
 echo "OPENMM_CUDA_COMPILER=${OPENMM_CUDA_COMPILER:-unset}" >&2
 
 # One-time setup (idempotent if script handles existing outputs)
+if [ $CLEAN_DATA -eq 1 ]; then
+  TS_CLEAN=$(date +%Y%m%d_%H%M%S)
+  if [ -d Data ] || [ -f Data/data_store.dat ]; then
+    echo "Cleaning existing Data (backup: Data_backup_${TS_CLEAN})" >&2
+    mv Data "Data_backup_${TS_CLEAN}" 2>/dev/null || rm -rf Data
+  fi
+  rm -rf Logs 2>/dev/null || true
+fi
+
 if [ ! -d Data ] || [ ! -d Logs ]; then
   echo "Running initial MELD setup (run_meld.py)" >&2
   if [ -f run_meld.py ]; then
@@ -154,7 +165,7 @@ echo "[rank $RANK] START host=$(hostname) pwd=$(pwd) SIZE=$SIZE TS=$TS" >&2
 # Ensure top-level Data exists (rank0 initializes if needed)
 if [ "$RANK" = 0 ] && [ ! -d Data ]; then
   echo "[rank 0] Creating Data directory" >&2
-  mkdir -p Data
+  mkdir -p Data/Blocks
 fi
 if [ "$RANK" = 0 ] && [ ! -f Data/data_store.dat ]; then
   echo "[rank 0] Initializing MELD data store via run_meld.py" >&2
@@ -164,22 +175,43 @@ if [ "$RANK" = 0 ] && [ ! -f Data/data_store.dat ]; then
     echo "[rank 0] WARNING: run_meld.py not found" >&2
   fi
 fi
-
-# Barrier (file-based): rank0 drops marker when data_store.dat present
+# Simple barrier marker
 if [ "$RANK" = 0 ]; then
-  if [ -f Data/data_store.dat ]; then
-    echo "ok" > Data/.init_ready
-  fi
+  if [ -f Data/data_store.dat ]; then echo ok > Data/.init_ready; fi
 else
   waited=0
   while [ ! -f Data/data_store.dat ] || [ ! -f Data/.init_ready ]; do
-    sleep 1
-    waited=$((waited+1))
-    if [ $waited -ge 180 ]; then
-      echo "[rank $RANK] ERROR: Timeout waiting for data_store.dat" >&2
-      exit 1
-    fi
+    sleep 1; waited=$((waited+1));
+    if [ $waited -ge 180 ]; then echo "[rank $RANK] ERROR: Timeout waiting for data_store.dat" >&2; exit 1; fi
   done
+fi
+
+# Corruption check & cleanup (rank0 only)
+if [ "$RANK" = 0 ] && [ -f Data/Blocks/block_000000.nc ]; then
+  python - <<'PY'
+import sys, os
+try:
+ import netCDF4 as nc
+ nc.Dataset('Data/Blocks/block_000000.nc').close()
+except Exception as e:
+ print('[rank 0] Detected corrupt block_000000.nc, removing:', e, file=sys.stderr)
+ try:
+  os.remove('Data/Blocks/block_000000.nc')
+ except OSError:
+  pass
+PY
+fi
+
+# Non-rank0 wait for first block file availability (size > 0)
+if [ "$RANK" != 0 ]; then
+  waited_blk=0
+  while { [ ! -s Data/Blocks/block_000000.nc ] && [ $waited_blk -lt 300 ]; }; do
+    sleep 2; waited_blk=$((waited_blk+2))
+  done
+  if [ ! -s Data/Blocks/block_000000.nc ]; then
+    echo "[rank $RANK] ERROR: block_000000.nc not ready after ${waited_blk}s" >&2
+    exit 1
+  fi
 fi
 
 # Activate environment
