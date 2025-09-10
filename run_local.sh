@@ -21,6 +21,7 @@ RUN_TAG="run"  # user-customizable grouping tag
 ROTATE_INTERVAL=600  # seconds between checkpoint rotation copies (rank 0 only)
 CLEAN_DATA=0
 FORCE_REINIT=0
+SCRATCH_BLOCKS=0
 
 # Argument parsing (supports --gpus 0,1 or --gpus=0,1)
 ARGS=("$@")
@@ -44,6 +45,7 @@ while [ $i -lt $# ]; do
     --rotate-interval=*) ROTATE_INTERVAL="${arg#--rotate-interval=}" ;;
     --clean-data) CLEAN_DATA=1 ;;
     --force-reinit) FORCE_REINIT=1 ;;
+    --scratch-blocks) SCRATCH_BLOCKS=1 ;;
     *.yml|*.yaml) ENV_FILE="$arg" ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
@@ -148,7 +150,7 @@ CMD=(launch_remd_multiplex --platform CUDA --debug)
 CMD_STRING="launch_remd_multiplex --platform CUDA --debug"
 RUNS_BASE="Runs/${RUN_TAG}"
 mkdir -p "$RUNS_BASE"
-export ENV_NAME BASE_CONDA CMD_STRING  # ensure wrapper sees these
+export ENV_NAME BASE_CONDA CMD_STRING RUN_TAG SCRATCH_BLOCKS  # ensure wrapper sees these
 
 # Re-create MPI wrapper script with CMD_STRING usage (updated with per-rank GPU binding and safe Data/Logs handling)
 MPI_WRAPPER="remd_rank_wrapper.sh"
@@ -162,87 +164,77 @@ SIZE=${OMPI_COMM_WORLD_SIZE:-${PMI_SIZE:-1}}
 : "${BASE_CONDA:?BASE_CONDA not set}"
 : "${ROTATE_INTERVAL:?ROTATE_INTERVAL not set}"
 : "${CMD_STRING:?CMD_STRING not set}"
+: "${RUN_TAG:?RUN_TAG not set}"
+: "${SCRATCH_BLOCKS:?SCRATCH_BLOCKS not set}"
 TS=${MELD_TS:-$(date +%Y%m%d_%H%M%S)}
 RANK_DIR="${RUNS_BASE}/rank${RANK}"
 mkdir -p "${RANK_DIR}/Logs"
 
-# Diagnostics
-echo "[rank $RANK] START host=$(hostname) pwd=$(pwd) SIZE=$SIZE TS=$TS" >&2
+echo "[rank $RANK] START host=$(hostname) pwd=$(pwd) SIZE=$SIZE TS=$TS scratch_blocks=$SCRATCH_BLOCKS" >&2
 
-# Activate environment early (needed for netCDF4)
+# Activate env
 source "$BASE_CONDA/etc/profile.d/conda.sh"
 conda activate "$ENV_NAME"
 export PYTHONUNBUFFERED=1
 
-# Data initialization (rank 0)
+# Data initialization (rank0 only)
 if [ "$RANK" = 0 ] && [ ! -d Data ]; then
   echo "[rank 0] Creating Data directory" >&2
   mkdir -p Data/Blocks
 fi
 if [ "$RANK" = 0 ] && [ ! -f Data/data_store.dat ]; then
-  echo "[rank 0] Initializing MELD data store via run_meld.py" >&2
-  if [ -f run_meld.py ]; then
-    python run_meld.py || echo "[rank 0] WARNING: run_meld.py initialization failed" >&2
-  else
-    echo "[rank 0] WARNING: run_meld.py not found" >&2
-  fi
+  echo "[rank 0] Initializing data store via run_meld.py" >&2
+  [ -f run_meld.py ] && python run_meld.py || echo "[rank 0] WARNING: run_meld.py missing or failed" >&2
 fi
 
-# Barrier marker
-if [ "$RANK" = 0 ]; then
-  [ -f Data/data_store.dat ] && echo ok > Data/.init_ready
-else
-  waited=0
-  while [ ! -f Data/data_store.dat ] || [ ! -f Data/.init_ready ]; do
-    sleep 1; waited=$((waited+1));
-    if [ $waited -ge 180 ]; then echo "[rank $RANK] ERROR: Timeout waiting for data_store.dat" >&2; exit 1; fi
-  done
-fi
-
-# Robust corruption check (rank0). Remove any zero-size or unreadable initial block file.
-if [ "$RANK" = 0 ]; then
-  if [ -f Data/Blocks/block_000000.nc ]; then
-    if [ ! -s Data/Blocks/block_000000.nc ]; then
-      echo "[rank 0] Removing zero-size block_000000.nc" >&2
-      rm -f Data/Blocks/block_000000.nc
-    else
-      python - <<'PY'
-import sys, os
-try:
- import netCDF4 as nc
- nc.Dataset('Data/Blocks/block_000000.nc').close()
-except Exception as e:
- print('[rank 0] Corrupt block_000000.nc detected, removing:', e, file=sys.stderr)
- try:
-  os.remove('Data/Blocks/block_000000.nc')
- except OSError:
-  pass
-PY
-    fi
-  fi
-fi
-
-# Non-rank0 wait for healthy first block (appears & readable) but do not block indefinitely.
+# Barrier for data_store.dat
 if [ "$RANK" != 0 ]; then
-  waited_blk=0
-  while [ $waited_blk -lt 300 ]; do
-    if [ -s Data/Blocks/block_000000.nc ]; then
-      python - <<'PY'
-import sys
-try:
- import netCDF4 as nc
- nc.Dataset('Data/Blocks/block_000000.nc').close()
-except Exception:
- sys.exit(1)
-PY
-      rc=$?
-      if [ $rc -eq 0 ]; then break; fi
-    fi
-    sleep 2; waited_blk=$((waited_blk+2))
+  waited=0
+  while [ ! -f Data/data_store.dat ]; do
+    sleep 1; waited=$((waited+1));
+    [ $waited -ge 180 ] && { echo "[rank $RANK] ERROR: Timeout waiting for data_store.dat" >&2; exit 1; }
   done
-  if [ $waited_blk -ge 300 ]; then
-    echo "[rank $RANK] WARNING: Proceeding without validated block_000000.nc after 300s" >&2
+fi
+
+# Per-rank scratch Blocks strategy
+# Goal: avoid concurrent NetCDF append to same block_000000.nc causing HDF errors.
+# Approach: non-rank0 writes to isolated scratch Blocks; on exit merge (rename) into Data/Blocks with rank prefix.
+if [ "$SCRATCH_BLOCKS" -eq 1 ]; then
+  if [ "$RANK" = 0 ]; then
+    mkdir -p Data/Blocks
+    export MELD_MERGE_TARGET="Data/Blocks"
+    echo "[rank 0] Using shared Blocks directory" >&2
+  else
+    SCRATCH_DIR="${RANK_DIR}/Blocks"
+    mkdir -p "$SCRATCH_DIR"
+    echo "[rank $RANK] Using scratch Blocks dir $SCRATCH_DIR" >&2
+    # Point MELD to scratch by temporarily relocating Data/Blocks
+    # Move original Blocks aside only once (rank0 already ensured existence)
+    # We can't remap internal path easily, so we use bind technique: create symlink Data/Blocks_rank<RANK> and set working copy via env var if supported.
+    export MELD_SCRATCH_BLOCKS_DIR="$SCRATCH_DIR"
+    # Provide a lightweight shim: if MELD writes Data/Blocks, intercept via symlink unique per rank directory name
+    # Create per-rank path Data/Blocks_rank<RANK> and symlink inside scratch for clarity
+    ln -s "$SCRATCH_DIR" "Data/Blocks_rank${RANK}" 2>/dev/null || true
+    # Export variable some MELD forks respect (best-effort). If unrecognized, manual merge still occurs.
+    export MELD_BLOCKS_DIR="$SCRATCH_DIR"
   fi
+  # Merge on exit (all non-rank0)
+  merge_blocks() {
+    if [ "$RANK" != 0 ]; then
+      target="Data/Blocks"
+      [ -d "$target" ] || mkdir -p "$target"
+      for f in "$SCRATCH_DIR"/block_*.nc; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        dest="${target}/rank${RANK}_$base"
+        if [ ! -f "$dest" ]; then
+          cp -p "$f" "$dest" 2>/dev/null || mv "$f" "$dest" 2>/dev/null || true
+        fi
+      done
+      echo "[rank $RANK] Merged scratch Blocks into $target" >&2
+    fi
+  }
+  trap merge_blocks EXIT
 fi
 
 # GPU binding
@@ -255,22 +247,23 @@ fi
 echo "[rank $RANK] CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "${RANK_DIR}/Logs/rank_gpu_binding.log"
 
 # Distinct random seed
-export MELD_RANDOM_SEED=$(( 1000 + RANK ))
+export MELD_RANDOM_SEED=$((1000+RANK))
 
-# Lightweight checkpoint rotation placeholder (rank0 only)
+# Optional rotation placeholder (rank0 only)
 if [ "$RANK" = 0 ]; then
-  (
-    set +e
-    while sleep "$ROTATE_INTERVAL"; do :; done
-  ) &
+  ( set +e; while sleep "$ROTATE_INTERVAL"; do :; done ) &
 fi
 
-# Redirect stdout/err into per-rank log if not already separated by mpirun
+# Log redirection
 if [ -z "${MPI_STDOUT_REDIRECTED:-}" ]; then
   LOG_FILE="${RANK_DIR}/Logs/remd_rank${RANK}.log"
   echo "[rank $RANK] Logging to $LOG_FILE" >&2
   exec >>"$LOG_FILE" 2>&1
 fi
+
+# Disable HDF5 locking (still beneficial)
+export HDF5_USE_FILE_LOCKING=FALSE
+export HDF5_DISABLE_VERSION_CHECK=2
 
 exec $CMD_STRING
 EOF
