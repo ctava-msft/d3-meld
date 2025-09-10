@@ -131,7 +131,7 @@ RUNS_BASE="Runs/${RUN_TAG}"
 mkdir -p "$RUNS_BASE"
 export ENV_NAME BASE_CONDA CMD_STRING  # ensure wrapper sees these
 
-# Re-create MPI wrapper script with CMD_STRING usage
+# Re-create MPI wrapper script with CMD_STRING usage (updated with per-rank GPU binding)
 MPI_WRAPPER="remd_rank_wrapper.sh"
 cat > "$MPI_WRAPPER" <<'EOF'
 #!/usr/bin/env bash
@@ -155,8 +155,20 @@ ln -s "${RANK_DIR}/Logs" Logs
 source "$BASE_CONDA/etc/profile.d/conda.sh"
 conda activate "$ENV_NAME"
 export PYTHONUNBUFFERED=1
+
+# Per-rank GPU binding: slice CUDA_VISIBLE_DEVICES so each rank sees only one GPU
+if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+  IFS=',' read -r -a DEV_ARR <<< "$CUDA_VISIBLE_DEVICES"
+  if [ "${#DEV_ARR[@]}" -gt 1 ]; then
+    SELECTED="${DEV_ARR[$(( RANK % ${#DEV_ARR[@]} ))]}"
+    export CUDA_VISIBLE_DEVICES="$SELECTED"
+  fi
+fi
+echo "[rank $RANK] CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" >> "${RANK_DIR}/Logs/rank_gpu_binding.log"
+
 # Distinct random seed per rank (if respected by MELD)
 export MELD_RANDOM_SEED=$(( 1000 + RANK ))
+
 # Rank 0 checkpoint rotation background loop (best-effort)
 if [ "$RANK" = 0 ]; then
   (
