@@ -1,43 +1,18 @@
 name: d3-meld-env
 channels:
   - conda-forge
-# If you need bioconda packages later, add:
-#  - bioconda
+  - bioconda
 
 dependencies:
   - python=3.11
-  - pip  # Keep base pip; no separate pip: section unless you add packages.
+  - pip
   - openmm
-  # NOTE: Do NOT list an MPI implementation explicitly on Windows.
   # mpi4py will pull in msmpi (Windows) or openmpi (Linux) automatically.
   - mpi4py
-  # meld not available on Windows; uncomment only on Linux/macOS:
-  # - meld
+  - meld
   - mdtraj
   - biopython
   - numpy
   - scipy
   - parmed
-  - cudatoolkit  # Optional if system CUDA absent. Match your GPU driver capability.
-
-# To add pip-only packages later, use either:
-#   pip install <pkg>
-# or edit this file adding:
-#   - pip:
-#       - somepackage
-# Ensure there is at least one real package under the pip: list (no only-comment entries) to avoid NoneType errors.
-
-# Usage:
-# Linux / macOS (with meld):
-#   1. Uncomment the 'meld' line.
-#   2. mamba env create -f conda.yaml
-# Windows (native, without meld):
-#   mamba env create -f conda.yaml
-# Activate:
-#   conda activate d3-meld-env
-# Run setup:
-#   python run_meld.py
-# Example GPU launch:
-#   launch_remd_multiplex --platform CUDA --debug
-# If CUDA toolkit already installed system-wide and matching driver, you can remove cudatoolkit here.
-# For deterministic solves, consider pinning versions (e.g., openmm=8.*, mdtraj=1.9.*).
+  - cudatoolkit
