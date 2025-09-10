@@ -14,6 +14,7 @@ ENV_FILE=conda.yaml
 BACKGROUND=0
 DO_RESTART=1
 GPUS=""   # comma-separated list triggers multi-launch
+RUN_PIDS=()  # store PIDs for launched processes
 
 # Argument parsing (supports --gpus 0,1 or --gpus=0,1)
 ARGS=("$@")
@@ -114,14 +115,18 @@ if [ -n "$GPUS" ]; then
   IFS=',' read -r -a GPU_LIST <<< "$GPUS"
   if [ "${#GPU_LIST[@]}" -gt 1 ]; then
     echo "Launching ${#GPU_LIST[@]} runs (one per GPU): $GPUS" >&2
+    TS=$(date +%Y%m%d_%H%M%S)
     for gpu in "${GPU_LIST[@]}"; do
       gpu_trim="${gpu// /}"  # remove spaces
-      LOG=remd_gpu${gpu_trim}_$(date +%Y%m%d_%H%M%S).log
-      echo " GPU $gpu_trim -> $LOG" >&2
-      # Always background for multi-launch
+      LOG=remd_gpu${gpu_trim}_${TS}.log
       nohup bash -lc "conda activate $ENV_NAME && CUDA_VISIBLE_DEVICES=$gpu_trim ${CMD[*]}" > "$LOG" 2>&1 &
+      pid=$!
+      RUN_PIDS+=($pid)
+      echo " GPU $gpu_trim -> $LOG (PID $pid)" >&2
     done
-    echo "Launched all GPU runs. PIDs: $(jobs -pr | tr '\n' ' ')" >&2
+    PID_FILE="remd_multi_${TS}.pids"
+    printf "%s\n" "${RUN_PIDS[@]}" > "$PID_FILE"
+    echo "Launched all GPU runs. PID list: ${RUN_PIDS[*]} (saved to $PID_FILE)" >&2
     exit 0
   else
     # Single GPU specified; run as normal with CUDA_VISIBLE_DEVICES
@@ -134,7 +139,10 @@ if [ "$BACKGROUND" -eq 1 ]; then
   LOG=remd_$(date +%Y%m%d_%H%M%S).log
   echo "Starting in background -> $LOG" >&2
   nohup bash -lc "conda activate $ENV_NAME && ${CMD[*]}" > "$LOG" 2>&1 &
-  echo "PID $!" >&2
+  pid=$!
+  PID_FILE="remd_single_${LOG%.log}.pid"
+  echo $pid > "$PID_FILE"
+  echo "PID $pid (saved to $PID_FILE)" >&2
 else
   echo "Running in foreground: ${CMD[*]}" >&2
   "${CMD[@]}"

@@ -7,7 +7,8 @@
    conda activate d3-meld-env
 4. Run meld setup script:
    python run_meld.py
-5. nohup bash -lc "./run_local.sh --gpus 0,1" > launcher_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+5. Run simulation in nohup:
+   nohup bash -lc "./run_local.sh --gpus 0,1" > launcher_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 
 ## Troubleshooting
 - Check GPU visibility:
