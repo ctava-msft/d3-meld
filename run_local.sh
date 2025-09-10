@@ -2,24 +2,37 @@
 set -euo pipefail
 
 # Local run helper (no Slurm). Usage:
-#   ./run_local.sh [conda_env_yaml] [--background] [--no-restart]
+#   ./run_local.sh [conda_env_yaml] [--background] [--no-restart] [--gpus 0,1]
 # Examples:
 #   ./run_local.sh                 # uses conda.yaml, foreground
 #   ./run_local.sh myenv.yaml      # custom env file
 #   ./run_local.sh --background    # run in background (nohup)
 #   ./run_local.sh myenv.yaml --background --no-restart
+#   ./run_local.sh --gpus 0,1      # launch one run on GPU0 and one on GPU1 (always background)
 
 ENV_FILE=conda.yaml
 BACKGROUND=0
 DO_RESTART=1
+GPUS=""   # comma-separated list triggers multi-launch
 
-for arg in "$@"; do
+# Argument parsing (supports --gpus 0,1 or --gpus=0,1)
+ARGS=("$@")
+i=0
+while [ $i -lt $# ]; do
+  arg="${ARGS[$i]}"
   case "$arg" in
     --background) BACKGROUND=1 ;;
     --no-restart) DO_RESTART=0 ;;
+    --gpus)
+      i=$((i+1))
+      [ $i -lt $# ] || { echo "ERROR: --gpus requires an argument" >&2; exit 1; }
+      GPUS="${ARGS[$i]}"
+      ;;
+    --gpus=*) GPUS="${arg#--gpus=}" ;;
     *.yml|*.yaml) ENV_FILE="$arg" ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
+  i=$((i+1))
 done
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -84,17 +97,38 @@ if [ ! -d Data ] || [ ! -d Logs ]; then
   fi
 fi
 
-# Restart logic
+# Restart logic (only meaningful for single run; applied once before multi-launch)
 if [ "$DO_RESTART" -eq 1 ] && [ -e Logs/remd_000.log ]; then
   echo "Preparing restart" >&2
   if command -v prepare_restart &>/dev/null; then
-    prepare_restart --prepare-run
+    prepare_restart --prepare-run || echo "WARNING: prepare_restart failed" >&2
   else
     echo "WARNING: prepare_restart not found; skipping restart prep" >&2
   fi
 fi
 
 CMD=(launch_remd_multiplex --platform CUDA --debug)
+
+# Multi-GPU launch block
+if [ -n "$GPUS" ]; then
+  IFS=',' read -r -a GPU_LIST <<< "$GPUS"
+  if [ "${#GPU_LIST[@]}" -gt 1 ]; then
+    echo "Launching ${#GPU_LIST[@]} runs (one per GPU): $GPUS" >&2
+    for gpu in "${GPU_LIST[@]}"; do
+      gpu_trim="${gpu// /}"  # remove spaces
+      LOG=remd_gpu${gpu_trim}_$(date +%Y%m%d_%H%M%S).log
+      echo " GPU $gpu_trim -> $LOG" >&2
+      # Always background for multi-launch
+      nohup bash -lc "conda activate $ENV_NAME && CUDA_VISIBLE_DEVICES=$gpu_trim ${CMD[*]}" > "$LOG" 2>&1 &
+    done
+    echo "Launched all GPU runs. PIDs: $(jobs -pr | tr '\n' ' ')" >&2
+    exit 0
+  else
+    # Single GPU specified; run as normal with CUDA_VISIBLE_DEVICES
+    export CUDA_VISIBLE_DEVICES="${GPU_LIST[0]}"
+    echo "Using GPU ${GPU_LIST[0]}" >&2
+  fi
+fi
 
 if [ "$BACKGROUND" -eq 1 ]; then
   LOG=remd_$(date +%Y%m%d_%H%M%S).log
