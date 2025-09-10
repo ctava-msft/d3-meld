@@ -13,7 +13,7 @@ set -euo pipefail
 ENV_FILE=conda.yaml
 BACKGROUND=0
 DO_RESTART=1
-GPUS=""   # comma-separated list triggers multi-launch
+GPUS="0,1"   # comma-separated list triggers multi-launch
 RUN_PIDS=()  # store PIDs for launched processes
 
 # Argument parsing (supports --gpus 0,1 or --gpus=0,1)
