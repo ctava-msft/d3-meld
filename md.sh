@@ -17,8 +17,26 @@ ENV_FILE=${1:-conda.yaml}
 #SBATCH -e slurm.%j.err         # file to save job's STDERR (%j = JobId)
 #SBATCH --export=NONE           # Purge the job-submitting shell environment
 
-module purge
-module load mamba/latest
+# Ensure the 'module' command is available (non-login shells may not have it)
+if ! command -v module &>/dev/null; then
+  if [ -f /etc/profile.d/modules.sh ]; then
+    # shellcheck disable=SC1091
+    source /etc/profile.d/modules.sh
+  elif [ -f /usr/share/Modules/init/bash ]; then
+    # shellcheck disable=SC1091
+    source /usr/share/Modules/init/bash
+  else
+    echo "WARNING: 'module' command not found; proceeding without environment modules" >&2
+    MODULE_UNAVAILABLE=1
+  fi
+fi
+
+if [ -z "${MODULE_UNAVAILABLE:-}" ]; then
+  module purge
+  module load mamba/latest
+else
+  echo "Skipping module loads (module system unavailable). Ensure conda/mamba is on PATH." >&2
+fi
 
 # --- Conda environment handling based on provided YAML ---
 if [ ! -f "$ENV_FILE" ]; then
@@ -44,7 +62,11 @@ conda activate "$ENV_NAME"
 trap 'conda deactivate || true' EXIT
 # ---------------------------------------------------------
 
-module load cuda-11.8.0-gcc-12.1.0
+if [ -z "${MODULE_UNAVAILABLE:-}" ]; then
+  module load cuda-11.8.0-gcc-12.1.0
+else
+  echo "Skipping CUDA module load; module system unavailable. Assuming CUDA already configured." >&2
+fi
 
 export OPENMM_CUDA_COMPILER=/packages/apps/spack/18/opt/spack/gcc-12.1.0/cuda-11.8.0-a4e/bin/nvcc
 
