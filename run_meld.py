@@ -15,7 +15,7 @@ import glob
 
 # Simulation configuration constants
 N_REPLICAS = 15          # Number of replicas used in REMD (alpha / temperature scaling)
-N_STEPS =  2000          # Maximum number of exchange steps (passed to LeaderReplicaExchangeRunner)
+N_STEPS =   10          # Maximum number of exchange steps (passed to LeaderReplicaExchangeRunner)
 BLOCK_SIZE = 5           # DataStore block size for writing trajectory/state data
 
 def gen_state(s, index):

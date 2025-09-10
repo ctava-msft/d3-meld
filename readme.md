@@ -26,7 +26,30 @@ Otherwise omit for faster startup.
 - Check GPU visibility:
   nvidia-smi
 
-## H100 - Resources
+## Monitoring
+
+grep 'Running replica exchange step ' ./remd.log | tail -n 40
+
+## Compute Resources
+
+az ml compute create  --resource-group rg-mayo-2 --workspace-name mlw-1  --name meld-v100   --type amlcompute   --min-instances 0   --max-instances 40   --
+size Standard_NC6s_v3
+
+
+
+az ml compute create \
+  --resource-group rg-mayo-2 \
+  --workspace-name mlw-1 \
+  --name meld-v100-spot \
+  --type amlcompute \
+  --size Standard_NC6s_v3 \
+  --min-instances 0 \
+  --max-instances 10 \
+  --ssh-public-access-enabled true \
+  --admin-username azureuser \
+  --ssh-key-value ~/.ssh/id_rsa.pub
+
+
 
 Standard_NC80adis_H100_v5 has 2x H100 NVL (≈94–95 GB each), 80 vCPUs total, 640 GB RAM.
 Approx per‑GPU share (just a planning heuristic):
