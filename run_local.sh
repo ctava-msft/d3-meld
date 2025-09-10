@@ -147,13 +147,25 @@ TS=${MELD_TS:-$(date +%Y%m%d_%H%M%S)}
 RANK_DIR="${RUNS_BASE}/rank${RANK}"
 mkdir -p "${RANK_DIR}/Data" "${RANK_DIR}/Logs"
 
-# Safely replace top-level Data/Logs with symlinks (backup if real dir and rank 0)
+# Safely replace top-level Data/Logs with symlinks (do NOT delete original contents before seeding)
 backup_stamp="${TS}_rank${RANK}"
 for d in Data Logs; do
   if [ -e "$d" ] && [ ! -L "$d" ]; then
-    mv "$d" "${d}_backup_${backup_stamp}" 2>/dev/null || rm -rf "$d"
+    # Seed per-rank directory with existing contents (if any) once.
+    if [ -d "$d" ]; then
+      cp -a "$d"/. "${RANK_DIR}/$d"/ 2>/dev/null || true
+    fi
   fi
-  rm -f "$d" 2>/dev/null || true
+  # Replace top-level path with symlink to per-rank copy (remove if symlink/file)
+  if [ -L "$d" ] || [ -f "$d" ]; then
+    rm -f "$d"
+  elif [ -d "$d" ] && [ ! -L "$d" ]; then
+    # Keep original directory only for rank 0 backup, then remove (others may race -> ignore errors)
+    if [ "$RANK" = 0 ]; then
+      mv "$d" "${d}_backup_${backup_stamp}" 2>/dev/null || true
+    fi
+    rm -rf "$d" 2>/dev/null || true
+  fi
   ln -s "${RANK_DIR}/$d" "$d"
  done
 
@@ -161,6 +173,29 @@ for d in Data Logs; do
 source "$BASE_CONDA/etc/profile.d/conda.sh"
 conda activate "$ENV_NAME"
 export PYTHONUNBUFFERED=1
+
+# Lazy initialization of MELD Data store (rank 0 only) if missing
+if [ "$RANK" = 0 ] && [ ! -f Data/data_store.dat ]; then
+  echo "[rank 0] Initializing MELD data store via run_meld.py" >&2
+  if [ -f run_meld.py ]; then
+    python run_meld.py || echo "[rank 0] WARNING: run_meld.py initialization failed" >&2
+  else
+    echo "[rank 0] WARNING: run_meld.py not found" >&2
+  fi
+fi
+# All ranks wait (bounded) for data_store.dat
+wait_seconds=0
+while [ ! -f Data/data_store.dat ] && [ $wait_seconds -lt 180 ]; do
+  sleep 2
+  wait_seconds=$((wait_seconds+2))
+  if [ $RANK -eq 0 ] && [ $((wait_seconds % 20)) -eq 0 ]; then
+    echo "[rank 0] Waiting for Data/data_store.dat (elapsed ${wait_seconds}s)" >&2
+  fi
+done
+if [ ! -f Data/data_store.dat ]; then
+  echo "[rank $RANK] ERROR: Data/data_store.dat not found after waiting ${wait_seconds}s" >&2
+  exit 1
+fi
 
 # Per-rank GPU binding
 if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
@@ -181,7 +216,6 @@ if [ "$RANK" = 0 ]; then
     set +e
     alt=0
     while sleep "$ROTATE_INTERVAL"; do
-      # Hook for future checkpoint copy
       alt=$((1-alt))
     done
   ) &
