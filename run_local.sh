@@ -126,10 +126,12 @@ if [ "$DO_RESTART" -eq 1 ] && [ -e Logs/remd_000.log ]; then
 fi
 
 CMD=(launch_remd_multiplex --platform CUDA --debug)
+CMD_STRING="launch_remd_multiplex --platform CUDA --debug"
 RUNS_BASE="Runs/${RUN_TAG}"
 mkdir -p "$RUNS_BASE"
+export ENV_NAME BASE_CONDA CMD_STRING  # ensure wrapper sees these
 
-# Create MPI wrapper script (idempotent overwrite) for per-rank isolation
+# Re-create MPI wrapper script with CMD_STRING usage
 MPI_WRAPPER="remd_rank_wrapper.sh"
 cat > "$MPI_WRAPPER" <<'EOF'
 #!/usr/bin/env bash
@@ -140,6 +142,7 @@ SIZE=${OMPI_COMM_WORLD_SIZE:-${PMI_SIZE:-1}}
 : "${ENV_NAME:?ENV_NAME not set}"    # from parent
 : "${BASE_CONDA:?BASE_CONDA not set}" # from parent
 : "${ROTATE_INTERVAL:?ROTATE_INTERVAL not set}"
+: "${CMD_STRING:?CMD_STRING not set}"
 TS=${MELD_TS:-$(date +%Y%m%d_%H%M%S)}
 RANK_DIR="${RUNS_BASE}/rank${RANK}"
 mkdir -p "${RANK_DIR}/Data" "${RANK_DIR}/Logs"
@@ -170,7 +173,7 @@ if [ "$RANK" = 0 ]; then
     done
   ) &
 fi
-exec "${CMD[@]}"
+exec $CMD_STRING
 EOF
 chmod +x "$MPI_WRAPPER"
 
@@ -183,10 +186,7 @@ if [ -n "$MPI_GPUS" ]; then
   NP=${#MPI_GPU_LIST[@]}
   [ $NP -gt 1 ] || { echo "ERROR: --mpi-gpus needs at least 2 GPUs for benefit." >&2; exit 1; }
   export CUDA_VISIBLE_DEVICES=$(IFS=,; echo "${MPI_GPU_LIST[*]}")
-  export MELD_ASSIGN_GPU_BY_RANK=1
-  export PYTHONUNBUFFERED=1
-  export RUNS_BASE RUN_TAG ROTATE_INTERVAL
-  export MELD_TS=$(date +%Y%m%d_%H%M%S)
+  export MELD_ASSIGN_GPU_BY_RANK=1 PYTHONUNBUFFERED=1 RUNS_BASE RUN_TAG ROTATE_INTERVAL MELD_TS=$(date +%Y%m%d_%H%M%S) ENV_NAME BASE_CONDA CMD_STRING
   LOG_PREFIX="${RUNS_BASE}/remd_mpi_${MELD_TS}"
   echo "Launching coordinated MPI REMD (np=$NP) tag=$RUN_TAG into $RUNS_BASE" >&2
   if mpirun --help 2>&1 | grep -q -- '--output-filename'; then
