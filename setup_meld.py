@@ -12,6 +12,21 @@ from meld import parse
 from meld import remd
 from openmm import unit as u
 import glob
+from pathlib import Path
+
+try:
+    # Prefer relative import if used as a module
+    from .setup_restraints import (
+        get_dist_restraints_protein,
+        process_phi_dat_file,
+        process_psi_file,
+    )
+except ImportError:  # Running as a script
+    from setup_restraints import (
+        get_dist_restraints_protein,
+        process_phi_dat_file,
+        process_psi_file,
+    )
 
 # Removed hard-coded simulation constants; now loaded from config (.env via python-dotenv)
 try:
@@ -58,6 +73,67 @@ def exec_meld_run():
         if seq[i][-3:] == 'HIE':
             seq[i] = 'HIS'
     print(seq)
+
+    # ---------------- Restraints (configurable) ----------------
+    if cfg.enable_restraints:
+        print("Applying restraints as per configuration...")
+        # Ramp scaler
+        ramp = s.restraints.create_scaler(
+            'nonlinear_ramp',
+            start_time=cfg.ramp_start_time,
+            end_time=cfg.ramp_end_time,
+            start_weight=cfg.ramp_start_weight,
+            end_weight=cfg.ramp_end_weight,
+            factor=cfg.ramp_factor,
+        )
+
+        torsion_rests = []
+        # Phi/Psi torsions
+        if cfg.phi_file and Path(cfg.phi_file).is_file():
+            try:
+                torsion_rests.extend(process_phi_dat_file(cfg.phi_file, s, seq))
+            except (IOError, ValueError) as e:
+                print(f"Warning: Failed to process phi file '{cfg.phi_file}': {e}")
+        else:
+            print(f"Warning: Phi file '{cfg.phi_file}' not found; skipping phi restraints.")
+
+        if cfg.psi_file and Path(cfg.psi_file).is_file():
+            try:
+                torsion_rests.extend(process_psi_file(cfg.psi_file, s, seq))
+            except (IOError, ValueError) as e:
+                print(f"Warning: Failed to process psi file '{cfg.psi_file}': {e}")
+        else:
+            print(f"Warning: Psi file '{cfg.psi_file}' not found; skipping psi restraints.")
+
+        if torsion_rests:
+            n_tors_keep = int(cfg.torsion_keep_fraction * len(torsion_rests))
+            n_tors_keep = max(1, min(len(torsion_rests), n_tors_keep))
+            s.restraints.add_selectively_active_collection(torsion_rests, n_tors_keep)
+            print(f"Added {len(torsion_rests)} torsion restraints (keeping {n_tors_keep}).")
+        else:
+            print("No torsion restraints added.")
+
+        # Distance restraints (competitive groups via get_dist_restraints_protein)
+        for dist_file in cfg.dist_files:
+            if not Path(dist_file).is_file():
+                print(f"Warning: Distance file '{dist_file}' not found; skipping.")
+                continue
+            try:
+                dist_scaler = s.restraints.create_scaler('constant')
+                dist_rests = get_dist_restraints_protein(dist_file, s, dist_scaler, ramp, seq)
+                if dist_rests:
+                    n_keep = int(cfg.distance_keep_fraction * len(dist_rests))
+                    n_keep = max(1, min(len(dist_rests), n_keep))
+                    s.restraints.add_selectively_active_collection(dist_rests, n_keep)
+                    print(f"Added {len(dist_rests)} distance restraints from '{dist_file}' (keeping {n_keep}).")
+                else:
+                    print(f"No restraints parsed from '{dist_file}'.")
+            except (IOError, ValueError) as e:
+                print(f"Warning: Failed processing distance file '{dist_file}': {e}")
+    else:
+        print("Restraints disabled by configuration (ENABLE_RESTRAINTS=false).")
+
+
 
     # Use configurable run options
     options = meld.RunOptions(
