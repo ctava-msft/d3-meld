@@ -7,7 +7,7 @@
 4. Run meld setup script:
    python run_meld.py
 5. Run simulation (coordinated multi-GPU REMD via MPI):
-   ```nohup bash -lc "./run_local.sh --mpi-gpus 0,1 --scratch-blocks" > remd_mpi_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
+   ```nohup bash -lc "./run_meld.sh --mpi-gpus 0,1 --scratch-blocks" > remd_mpi_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
 ## Flag summary (selected)
 - --mpi-gpus 0,1          Run coordinated REMD across listed GPUs.
@@ -27,7 +27,7 @@ grep 'Running replica exchange step ' ./remd.log | tail -n 40
 
 ## Compute Resources
 
-run_meld.py:
+setup_meld.py:
 
 Pure setup (build system, write DataStore). CPU-only is fine; GPU gives negligible benefit here.
 launch_remd_multiplex:
