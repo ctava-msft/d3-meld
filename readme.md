@@ -72,6 +72,11 @@ grep 'Running replica exchange step' Runs/run/multigpu_*/remd.log | head
  conda activate d3-meld-2-env
 extract_trajectory extract_traj_dcd --replica 0 trajectory.00.dcd
 
+If you previously saw: AttributeError: 'RunOptions' object has no attribute 'solvation'
+- A version mismatch removed the field.
+- Fix: sitecustomize.py now injects a solvation property (default from SOLVATION_MODE env var or 'implicit').
+- Ensure you run the command from the project directory so sitecustomize is on PYTHONPATH.
+
 ## Troubleshooting
 - Check GPU visibility:
   nvidia-smi
