@@ -80,6 +80,12 @@ If you previously saw: AttributeError: 'RunOptions' object has no attribute 'sol
 - Then:
   conda activate d3-meld-2-env
   extract_trajectory extract_traj_dcd --replica 0 trajectory.00.dcd
+  extract_trajectory follow_dcd --replica 0 follow.00.dcd
+# Visualize (RMSD + optional interactive)
+python visualize_dcd.py --top prot_tleap.pdb trajectory.00.dcd follow.00.dcd
+python visualize_dcd.py --top prot_tleap.pdb --selection "name CA and resid 69-91" trajectory.00.dcd
+# Interactive (if nglview installed)
+python visualize_dcd.py --top prot_tleap.pdb --show trajectory.00.dcd
 
 ## Troubleshooting
 - Check GPU visibility:
