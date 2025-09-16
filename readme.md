@@ -68,8 +68,9 @@ grep 'Running replica exchange step' Runs/run/multigpu_*/remd.log | head
 
    ```nohup bash -lc "./run_meld.sh --multi-gpus 0,1 --scratch-blocks" > remd_multigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
+## Extracting trajectory
  conda activate d3-meld-2-env
-
+extract_trajectory extract_traj_dcd --replica 0 trajectory.00.dcd
 
 ## Troubleshooting
 - Check GPU visibility:
