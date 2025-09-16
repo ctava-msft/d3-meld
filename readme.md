@@ -47,6 +47,7 @@ Run one main simulation rank per GPU; if using OpenMM / MELD with minor CPU help
 - --force-reinit          Backup and recreate Data directory (use once after errors or to start fresh).
 - --clean-data            Backup existing Data then start fresh (less aggressive than force if already clean of partial files).
 - --gpus 0,1              Launch independent (non-MPI) runs on listed GPUs.
+- --multi-gpus 0,1        Single multiplex process with multiple GPUs visible (no MPI, avoids per-rank duplication).
 
 
 ## Recipe
@@ -54,6 +55,7 @@ Run one main simulation rank per GPU; if using OpenMM / MELD with minor CPU help
 2. Run simulation (coordinated multi-GPU REMD via MPI):
    ```nohup bash -lc "./run_meld.sh --mpi-gpus 0,1 --scratch-blocks" > remd_mpi_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
+   ```nohup bash -lc "./run_meld.sh --multi-gpus 0,1 --scratch-blocks" > remd_multigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
  conda activate d3-meld-2-env
 

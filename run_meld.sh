@@ -16,6 +16,7 @@ BACKGROUND=0
 DO_RESTART=1
 GPUS=""
 MPI_GPUS=""
+MULTI_GPUS=""  # new: comma list of GPUs for a single multi-GPU multiplex run (no MPI)
 RUN_PIDS=()
 RUN_TAG="run"  # user-customizable grouping tag
 ROTATE_INTERVAL=600  # seconds between checkpoint rotation copies (rank 0 only)
@@ -37,6 +38,9 @@ while [ $i -lt $# ]; do
     --mpi-gpus)
       i=$((i+1)); [ $i -lt $# ] || { echo "ERROR: --mpi-gpus requires an argument" >&2; exit 1; }; MPI_GPUS="${ARGS[$i]}" ;;
     --mpi-gpus=*) MPI_GPUS="${arg#--mpi-gpus=}" ;;
+    --multi-gpus)
+      i=$((i+1)); [ $i -lt $# ] || { echo "ERROR: --multi-gpus requires an argument" >&2; exit 1; }; MULTI_GPUS="${ARGS[$i]}" ;;
+    --multi-gpus=*) MULTI_GPUS="${arg#--multi-gpus=}" ;;
     --run-tag)
       i=$((i+1)); [ $i -lt $# ] || { echo "ERROR: --run-tag requires a value" >&2; exit 1; }; RUN_TAG="${ARGS[$i]}" ;;
     --run-tag=*) RUN_TAG="${arg#--run-tag=}" ;;
@@ -52,9 +56,28 @@ while [ $i -lt $# ]; do
   i=$((i+1))
 done
 
-if [ -n "$GPUS" ] && [ -n "$MPI_GPUS" ]; then
-  echo "ERROR: Use either --gpus or --mpi-gpus, not both." >&2
+if { [ -n "$GPUS" ] && [ -n "$MPI_GPUS" ]; } || { [ -n "$GPUS" ] && [ -n "$MULTI_GPUS" ]; } || { [ -n "$MPI_GPUS" ] && [ -n "$MULTI_GPUS" ]; }; then
+  echo "ERROR: Use only one of --gpus / --mpi-gpus / --multi-gpus." >&2
   exit 1
+fi
+
+# Single multiplex run spanning multiple GPUs without MPI (one process, OpenMM auto visibility)
+if [ -n "$MULTI_GPUS" ]; then
+  export CUDA_VISIBLE_DEVICES="$MULTI_GPUS"
+  echo "Launching single multiplex run on GPUs: $MULTI_GPUS (non-MPI)" >&2
+  if [ "$BACKGROUND" -eq 1 ]; then
+    TS=$(date +%Y%m%d_%H%M%S)
+    SUBDIR="$RUNS_BASE/multigpu_${TS}"
+    mkdir -p "$SUBDIR"
+    LOG="$SUBDIR/remd.log"
+    echo "Background multi-GPU run -> $LOG" >&2
+    nohup bash -lc "$CONDA_ACTIVATE_CMD && cd $SUBDIR && ${CMD[*]}" > "$LOG" 2>&1 &
+    pid=$!; echo $pid > "$SUBDIR/pid"; echo "PID $pid" >&2
+  else
+    echo "Foreground multi-GPU run (${CMD[*]})" >&2
+    "${CMD[@]}"
+  fi
+  exit 0
 fi
 
 if [ ! -f "$ENV_FILE" ]; then

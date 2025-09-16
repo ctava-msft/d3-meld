@@ -63,11 +63,11 @@ def load_simulation_config(env_path: str | None = None) -> SimulationConfig:
     return SimulationConfig(
         sequence_file=os.getenv("SEQUENCE_FILE", "prot_tleap_sequence.dat"),
         pdb_file=os.getenv("PDB_FILE", "prot_tleap.pdb"),
-        n_replicas=_get_int("N_REPLICAS", 30),
-        n_steps=_get_int("N_STEPS", 1500),
-        block_size=_get_int("BLOCK_SIZE", 50),
-        timesteps=_get_int("TIMESTEPS", 25000),
-        minimize_steps=_get_int("MINIMIZE_STEPS", 20000),
+        n_replicas=_get_int("N_REPLICAS", 10),
+        n_steps=_get_int("N_STEPS", 150),
+        block_size=_get_int("BLOCK_SIZE", 5),
+        timesteps=_get_int("TIMESTEPS", 2500),
+        minimize_steps=_get_int("MINIMIZE_STEPS", 2000),
         enable_restraints=_get_bool("ENABLE_RESTRAINTS", True),
         phi_file=os.getenv("PHI_FILE", "phi.dat"),
         psi_file=os.getenv("PSI_FILE", "psi.dat"),
@@ -80,9 +80,3 @@ def load_simulation_config(env_path: str | None = None) -> SimulationConfig:
         ramp_end_weight=_get_float("RAMP_END_WEIGHT", 1.0),
         ramp_factor=_get_float("RAMP_FACTOR", 4.0),
     )
-
-# Integration hint (do this inside the module where exec_meld_run is defined):
-# from d3-meld.config import load_simulation_config
-# def exec_meld_run(..., config: SimulationConfig | None = None):
-#     cfg = config or load_simulation_config()
-#     # use cfg.sequence_file, cfg.pdb_file, cfg.n_replicas, etc.
