@@ -137,106 +137,34 @@ Check per-rank logs under `Logs/slurm_r<rank>/remd_rank<rank>.log`.
 
 ## Blob Upload (Azure)
 
-`blob_upload.py` lets you push simulation outputs to the workspace default blob container using Entra ID (Azure AD) authentication (no account keys or SAS tokens required).
+To keep this README clean and free of environment‑specific identifiers, detailed usage instructions, examples, and placeholders for `blob_upload.py` have been moved to `docs/blob_upload_usage.md`.
 
-Prerequisites:
-- Your identity (user or managed identity) must have at least `Storage Blob Data Contributor` on the storage account or container.
-- `azure-identity` and `azure-storage-blob` are in `requirements.txt` (install with `pip install -r requirements.txt`).
-- Sign in locally with `az login` (if running outside Azure) so `DefaultAzureCredential` can pick up a token.
+Quick essentials:
+- Script: `blob_upload.py`
+- Auth: DefaultAzureCredential (interactive / SP / MI) or explicit Managed Identity via `--managed-identity`.
+- Provide storage context via `--account-name` + `--container` (or `--account-url`).
+- Optional: `.env` with `AZURE_TENANT_ID`, `ACCOUNT_NAME`, `BLOB_CONTAINER`.
 
-Example container (from workspace):
+View full instructions:
+
 ```
-https://mlw12672014268.blob.core.windows.net/azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2
+cat docs/blob_upload_usage.md
 ```
-Container name is the last path segment: `azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2`.
 
-Basic usage (upload a single file):
+Minimal example (placeholders):
 ```bash
-python blob_upload.py \
-  --account-name mlw12672014268 \
-  --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 \
-  --path rmsd_trajectory.00.dcd.png
+ACCOUNT_NAME=yourstorageacct \
+BLOB_CONTAINER=your-container \
+python blob_upload.py --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path path/to/file.dat
 ```
 
-Upload a directory recursively under a prefix:
+Managed Identity example:
 ```bash
-python blob_upload.py \
-  --account-name mlw12672014268 \
-  --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 \
-  --path analysis_output \
-  --destination-prefix runs/2025-09-16 \
-  --detect-content-type --concurrency 16 --per-file-concurrency 8
+ACCOUNT_NAME=yourstorageacct \
+BLOB_CONTAINER=your-container \
+python blob_upload.py --managed-identity --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path output_dir
 ```
 
-Dry run (show what would be sent):
-```bash
-python blob_upload.py --account-name mlw12672014268 --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 --path analysis_output --dry-run
-```
-
-Overwrite existing blobs:
-```bash
-python blob_upload.py --account-name mlw12672014268 --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 --path rmsd_trajectory.00.dcd.png --overwrite
-```
-
-Specify tenant (multi-tenant scenarios):
-```bash
-python blob_upload.py --account-name mlw12672014268 --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 --path analysis_output --tenant-id <tenant-guid>
-```
-
-Conditional upload only if blob absent (prevent accidental overwrite without failing):
-```bash
-python blob_upload.py --account-name mlw12672014268 --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 --path metrics.json --if-none-match "*"
-```
-
-Exit codes:
-- 0: all uploads succeeded
-- 1: one or more uploads failed
-- 2: authentication or container access failure
-
-Troubleshooting:
-- Auth errors: run `az login` or ensure managed identity has data plane role.
-- 403 errors: verify RBAC role assignment has propagated (can take a few minutes).
-- Slow throughput: increase `--concurrency` (files) and/or `--per-file-concurrency` (per large blob) but watch local disk & network saturation.
-- Content types default to `application/octet-stream` unless `--detect-content-type` is provided.
-
-### Quick Start (blob_upload.py)
-
-1. Install dependencies (if not already):
-  ```bash
-  pip install -r requirements.txt
-  ```
-2. Authenticate (outside Azure / local dev):
-  ```bash
-  az login
-  ```
-3. Upload a single file:
-  ```bash
-  python blob_upload.py --account-name mlw12672014268 \
-    --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 \
-    --path rmsd_trajectory.00.dcd.png
-  ```
-4. Upload a results directory with a date prefix and inferred MIME types:
-  ```bash
-  python blob_upload.py --account-name mlw12672014268 \
-    --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 \
-    --path analysis_output --destination-prefix runs/$(date +%Y%m%d) \
-    --detect-content-type --concurrency 16 --per-file-concurrency 8
-  ```
-5. Preview (no upload):
-  ```bash
-  python blob_upload.py --account-name mlw12672014268 --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 --path analysis_output --dry-run
-  ```
-6. Only upload if blob absent (safe publish):
-  ```bash
-  python blob_upload.py --account-name mlw12672014268 \
-    --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 \
-    --path metrics.json --if-none-match "*"
-  ```
-7. Increase verbosity:
-  ```bash
-  python blob_upload.py --account-name mlw12672014268 --container azureml-blobstore-cccc308d-ad54-4fd3-a99a-3bc50bd4ace2 --path analysis_output --verbose
-  ```
-
-Environment-based auth (optional): if running in Azure (e.g., Compute Instance / VM with system/user assigned managed identity) ensure that identity has `Storage Blob Data Contributor` — then no `az login` is required.
+See the docs file for: concurrency tuning, conditional uploads, content-type detection, tenant validation, exit codes, troubleshooting, and performance tips.
 
 

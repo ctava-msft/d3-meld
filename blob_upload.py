@@ -11,6 +11,7 @@ from typing import List, Optional, Iterable, Tuple
 
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
+from azure.identity import ManagedIdentityCredential
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from azure.core.exceptions import ResourceExistsError, ServiceRequestError, ServiceResponseError, ClientAuthenticationError
 
@@ -116,6 +117,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true", help="List what would be uploaded without performing uploads.")
     p.add_argument("--verbose", action="store_true", help="Verbose logging.")
     p.add_argument("--tenant-id", help="Tenant ID (overrides AZURE_TENANT_ID env/.env if provided).")
+    p.add_argument("--managed-identity", action="store_true", help="Use Managed Identity instead of DefaultAzureCredential chain (disables interactive login).")
+    p.add_argument("--mi-client-id", help="Client ID of user-assigned managed identity (optional).")
     p.add_argument("--timeout", type=int, default=0, help="Overall timeout in seconds (0 = no timeout).")
     return p.parse_args()
 
@@ -135,31 +138,48 @@ def main():
     # Load .env variables (non-destructive: existing os.environ wins)
     load_env_file()
 
-    # Determine tenant id precedence: CLI flag > env var AZURE_TENANT_ID > fail
-    tenant_id = args.tenant_id or os.environ.get("AZURE_TENANT_ID")
-    if not tenant_id:
-        print("ERROR: Tenant ID not provided. Use --tenant-id or set AZURE_TENANT_ID in environment/.env", file=sys.stderr)
-        sys.exit(3)
+    credential = None
+    tenant_id = None
 
-    # Acquire credential (DefaultAzureCredential covers Managed Identity, CLI, VS Code, etc.)
-    credential = DefaultAzureCredential(tenant_id=tenant_id)
-
-    # Validate the token's tenant (defense-in-depth) before performing operations
-    try:
-        token = credential.get_token("https://storage.azure.com/.default").token
-        parts = token.split('.')
-        if len(parts) < 2:
-            raise ValueError("Unexpected token format")
-        payload_b64 = parts[1] + '==='  # pad for base64
-        payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
-        payload = json.loads(payload_json)
-        tid = payload.get('tid') or payload.get('tenantId')
-        if tid != tenant_id:
-            print(f"ERROR: Acquired token tenant {tid} does not match requested tenant {tenant_id}", file=sys.stderr)
+    if args.managed_identity:
+        # Managed Identity scenario: tenant may not be required; specify client ID if user-assigned.
+        if args.tenant_id:
+            tenant_id = args.tenant_id
+        else:
+            tenant_id = os.environ.get("AZURE_TENANT_ID")  # optional
+        try:
+            if args.mi_client_id:
+                credential = ManagedIdentityCredential(client_id=args.mi_client_id)
+            else:
+                credential = ManagedIdentityCredential()
+        except Exception as ex:  # pylint: disable=broad-except
+            print(f"ERROR: Failed to initialize ManagedIdentityCredential: {ex}", file=sys.stderr)
             sys.exit(3)
-    except Exception as ex:  # pylint: disable=broad-except
-        print(f"ERROR: Failed to validate tenant id: {ex}", file=sys.stderr)
-        sys.exit(3)
+    else:
+        # Default credential chain (interactive / CLI / VS Code / MI fallback)
+        tenant_id = args.tenant_id or os.environ.get("AZURE_TENANT_ID")
+        if not tenant_id:
+            print("ERROR: Tenant ID not provided. Use --tenant-id or set AZURE_TENANT_ID in environment/.env (or use --managed-identity).", file=sys.stderr)
+            sys.exit(3)
+        credential = DefaultAzureCredential(tenant_id=tenant_id)
+
+    # Validate tenant only if we have a desired tenant_id
+    if tenant_id:
+        try:
+            token = credential.get_token("https://storage.azure.com/.default").token
+            parts = token.split('.')
+            if len(parts) < 2:
+                raise ValueError("Unexpected token format")
+            payload_b64 = parts[1] + '==='  # pad for base64
+            payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
+            payload = json.loads(payload_json)
+            tid = payload.get('tid') or payload.get('tenantId')
+            if tid != tenant_id:
+                print(f"ERROR: Acquired token tenant {tid} does not match requested tenant {tenant_id}", file=sys.stderr)
+                sys.exit(3)
+        except Exception as ex:  # pylint: disable=broad-except
+            print(f"ERROR: Failed to validate tenant id: {ex}", file=sys.stderr)
+            sys.exit(3)
 
     blob_service = BlobServiceClient(account_url=account_url, credential=credential)
     try:
