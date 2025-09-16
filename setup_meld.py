@@ -13,6 +13,7 @@ from meld import remd
 from openmm import unit as u
 import glob
 from pathlib import Path
+import weakref  # added
 
 try:
     # Prefer relative import if used as a module
@@ -146,20 +147,22 @@ def exec_meld_run():
     else:
         print("Restraints disabled by configuration (ENABLE_RESTRAINTS=false).")
 
-    # Use configurable run options
-    try:
-        options = meld.RunOptions(
-            timesteps=cfg.timesteps,
-            minimize_steps=cfg.minimize_steps,
-            solvation=cfg.solvation_mode,  # preferred if supported
-        )
-    except TypeError:
-        options = meld.RunOptions(
-            timesteps=cfg.timesteps,
-            minimize_steps=cfg.minimize_steps,
-        )
-        # Backward compatibility: attach attribute for tools expecting it
-        setattr(options, "solvation", cfg.solvation_mode)
+    # Use configurable run options (add solvation attribute via monkey patch if library lacks it)
+    # Monkey patch once
+    _solvation_values = globals().get("_solvation_values")
+    if _solvation_values is None:
+        _solvation_values = weakref.WeakKeyDictionary()
+        globals()["_solvation_values"] = _solvation_values
+        if not hasattr(meld.RunOptions, "solvation"):
+            def _solvation(self):
+                return _solvation_values.get(self, "implicit")
+            setattr(meld.RunOptions, "solvation", property(_solvation))
+
+    options = meld.RunOptions(
+        timesteps=cfg.timesteps,
+        minimize_steps=cfg.minimize_steps,
+    )
+    _solvation_values[options] = cfg.solvation_mode
 
     # DataStore initialization
     store = vault.DataStore(gen_state(s, 0, cfg), cfg.n_replicas, s.get_pdb_writer(), block_size=cfg.block_size)
