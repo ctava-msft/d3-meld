@@ -161,7 +161,11 @@ def main():
         if not tenant_id:
             print("ERROR: Tenant ID not provided. Use --tenant-id or set AZURE_TENANT_ID in environment/.env (or use --managed-identity).", file=sys.stderr)
             sys.exit(3)
-        credential = DefaultAzureCredential(tenant_id=tenant_id)
+        # DefaultAzureCredential in current azure-identity version does NOT accept tenant_id kwarg.
+        # Ensure environment variable is set so the chain honors the intended tenant.
+        if "AZURE_TENANT_ID" not in os.environ:
+            os.environ["AZURE_TENANT_ID"] = tenant_id
+        credential = DefaultAzureCredential()
 
     # Validate tenant only if we have a desired tenant_id
     if tenant_id:
@@ -170,8 +174,9 @@ def main():
             parts = token.split('.')
             if len(parts) < 2:
                 raise ValueError("Unexpected token format")
-            payload_b64 = parts[1] + '==='  # pad for base64
-            payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
+            payload_segment = parts[1]
+            padding = '=' * (-len(payload_segment) % 4)
+            payload_json = base64.urlsafe_b64decode(payload_segment + padding).decode('utf-8')
             payload = json.loads(payload_json)
             tid = payload.get('tid') or payload.get('tenantId')
             if tid != tenant_id:

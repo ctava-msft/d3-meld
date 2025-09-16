@@ -151,12 +151,22 @@ View full instructions:
 cat docs/blob_upload_usage.md
 ```
 
+```shell
+python -m venv .venv 
+source .venv/bin/activate
+```
+
+```shell
+pip install -r requirements.txt
+```
+
 Minimal example (placeholders):
 ```bash
 ACCOUNT_NAME=yourstorageacct \
 BLOB_CONTAINER=your-container \
 python blob_upload.py --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path path/to/file.dat
 ```
+
 
 Managed Identity example:
 ```bash
