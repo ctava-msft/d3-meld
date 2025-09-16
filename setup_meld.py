@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
-"""Run a MELD temperature replica-exchange simulation.
+"""Setup a MELD temperature replica-exchange simulation.
 Build an Amber system from an input PDB and sequence, initialize replica states,
 configure ladder/adaptor, and persist setup to a MELD DataStore.
 """
@@ -28,10 +28,10 @@ except ImportError:  # Running as a script
         process_psi_file,
     )
 
-# Removed hard-coded simulation constants; now loaded from config (.env via python-dotenv)
+# load from config (.env via python-dotenv)
 try:
     from .config import load_simulation_config
-except ImportError:  # Allow running as a script
+except ImportError:
     from config import load_simulation_config
 
 def gen_state(s, index, cfg):
@@ -87,29 +87,42 @@ def exec_meld_run():
             factor=cfg.ramp_factor,
         )
 
-        torsion_rests = []
-        # Phi/Psi torsions
+        torison_restraints = []
+        # Phi/Psi torsions with per-file accounting
+        phi_count = 0
+        psi_count = 0
+
         if cfg.phi_file and Path(cfg.phi_file).is_file():
+            before = len(torison_restraints)
             try:
-                torsion_rests.extend(process_phi_dat_file(cfg.phi_file, s, seq))
+                torison_restraints.extend(process_phi_dat_file(cfg.phi_file, s, seq))
+                phi_count = len(torison_restraints) - before
             except (IOError, ValueError) as e:
                 print(f"Warning: Failed to process phi file '{cfg.phi_file}': {e}")
         else:
             print(f"Warning: Phi file '{cfg.phi_file}' not found; skipping phi restraints.")
 
         if cfg.psi_file and Path(cfg.psi_file).is_file():
+            before = len(torison_restraints)
             try:
-                torsion_rests.extend(process_psi_file(cfg.psi_file, s, seq))
+                torison_restraints.extend(process_psi_file(cfg.psi_file, s, seq))
+                psi_count = len(torison_restraints) - before
             except (IOError, ValueError) as e:
                 print(f"Warning: Failed to process psi file '{cfg.psi_file}': {e}")
         else:
             print(f"Warning: Psi file '{cfg.psi_file}' not found; skipping psi restraints.")
 
-        if torsion_rests:
-            n_tors_keep = int(cfg.torsion_keep_fraction * len(torsion_rests))
-            n_tors_keep = max(1, min(len(torsion_rests), n_tors_keep))
-            s.restraints.add_selectively_active_collection(torsion_rests, n_tors_keep)
-            print(f"Added {len(torsion_rests)} torsion restraints (keeping {n_tors_keep}).")
+        if torison_restraints:
+            n_tors_keep = int(cfg.torsion_keep_fraction * len(torison_restraints))
+            n_tors_keep = max(1, min(len(torison_restraints), n_tors_keep))
+            s.restraints.add_selectively_active_collection(torison_restraints, n_tors_keep)
+            sources = []
+            if phi_count:
+                sources.append(f"'{cfg.phi_file}'")
+            if psi_count:
+                sources.append(f"'{cfg.psi_file}'")
+            source_str = ", ".join(sources) if sources else "unknown sources"
+            print(f"Added {len(torison_restraints)} torsion restraints from {source_str} (keeping {n_tors_keep}).")
         else:
             print("No torsion restraints added.")
 
@@ -132,8 +145,6 @@ def exec_meld_run():
                 print(f"Warning: Failed processing distance file '{dist_file}': {e}")
     else:
         print("Restraints disabled by configuration (ENABLE_RESTRAINTS=false).")
-
-
 
     # Use configurable run options
     options = meld.RunOptions(
@@ -158,10 +169,9 @@ def exec_meld_run():
     c = comm.MPICommunicator(s.n_atoms, cfg.n_replicas, timeout=60000)
     store.save_communicator(c)
 
-    # Initial states
+    # Initial and store states
     states = [gen_state(s, i, cfg) for i in range(cfg.n_replicas)]
     store.save_states(states, 0)
-
     store.save_data_store()
 
 if __name__ == "__main__":

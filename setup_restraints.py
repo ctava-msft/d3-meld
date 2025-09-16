@@ -29,6 +29,10 @@ def _parse_distance_file(
     ramp,
     seq: Iterable[str],
     has_explicit_distance: bool,
+    *,
+    auto_offset: bool = True,
+    summarize: bool = True,
+    verbose: bool = False,
 ) -> List:
     """Generic parser for distance restraint specification files.
 
@@ -48,6 +52,21 @@ def _parse_distance_file(
         If True, expect format: i atom_i j atom_j dist_nm.
         If False, expect format: i atom_i j atom_j (fixed window 0.8–1.0 nm).
 
+    Parameters (extended)
+    ---------------------
+    auto_offset : bool, default True
+        Attempt to detect if residue indices in the file are an absolute block
+        (e.g. 129..279 for a 151-length sequence) and, if so, shift them so the
+        minimum maps to 1. Detection condition: min_index > 1 and
+        (max_index - min_index + 1) == len(seq). If this condition fails, no
+        offset is applied.
+    summarize : bool, default True
+        Aggregate and print a single summary line for skipped / malformed lines
+        instead of emitting one warning per line. Some validation errors (like
+        malformed column counts) still raise immediately.
+    verbose : bool, default False
+        If True, always print individual skip reasons (legacy behavior).
+
     Returns
     -------
     list
@@ -57,37 +76,76 @@ def _parse_distance_file(
     if not path.is_file():
         raise FileNotFoundError(f"Distance restraint file not found: {filename}")
 
+    # First pass: read all lines so we can attempt auto-offset detection.
+    raw_lines = path.read_text().splitlines()
+    index_pairs = []  # store (i_raw, j_raw)
+    parsed_lines = []  # store tuples for second pass
+    malformed = 0
+    malformed_examples = []
+    for raw in raw_lines:
+        stripped = raw.strip()
+        if not stripped:
+            parsed_lines.append((None, raw))  # delimiter marker
+            continue
+        cols = stripped.split()
+        if has_explicit_distance and len(cols) < 5:
+            raise ValueError(f"Line expects 5 columns (i atom_i j atom_j dist) in {filename}: '{stripped}'")
+        if not has_explicit_distance and len(cols) < 4:
+            raise ValueError(f"Line expects 4 columns (i atom_i j atom_j) in {filename}: '{stripped}'")
+        try:
+            i_raw = int(cols[0])
+            j_raw = int(cols[2])
+        except ValueError:
+            malformed += 1
+            if len(malformed_examples) < 3:
+                malformed_examples.append(stripped)
+            continue
+        index_pairs.append((i_raw, j_raw))
+        parsed_lines.append(((i_raw, j_raw, cols), raw))
+
+    n_seq = len(seq)
+    offset = 0
+    if auto_offset and index_pairs:
+        all_indices = [v for pair in index_pairs for v in pair]
+        min_idx = min(all_indices)
+        max_idx = max(all_indices)
+        if min_idx > 1 and (max_idx - min_idx + 1) == n_seq:
+            offset = min_idx - 1
+            if verbose:
+                print(f"Info: Applying auto offset of {offset} to residue indices in {filename} (range {min_idx}-{max_idx}, seq_len={n_seq}).")
+        else:
+            if verbose:
+                print(f"Info: No auto offset applied for {filename} (min={min_idx}, max={max_idx}, seq_len={n_seq}).")
+
     groups: List = []
     current: List = []
-    with path.open() as fh:
-        for raw in fh:
-            line = raw.strip()
-            if not line:
-                if current:
-                    groups.append(s.restraints.create_restraint_group(current, 1))
-                    current = []
-                continue
-            cols = line.split()
-            if has_explicit_distance and len(cols) < 5:
-                raise ValueError(f"Line expects 5 columns (i atom_i j atom_j dist) in {filename}: '{line}'")
-            if not has_explicit_distance and len(cols) < 4:
-                raise ValueError(f"Line expects 4 columns (i atom_i j atom_j) in {filename}: '{line}'")
-            try:
-                i = int(cols[0]) - 1
-                j = int(cols[2]) - 1
-            except ValueError:
-                print(f"Warning: Non-integer residue index in {filename}: '{line}' -> skipping line")
-                continue
-            name_i = cols[1]
-            name_j = cols[3]
+    skipped_out_of_range = 0
+    oor_examples = []
+    created = 0
+    for entry, raw in parsed_lines:
+        if entry is None:
+            if current:
+                groups.append(s.restraints.create_restraint_group(current, 1))
+                current = []
+            continue
+        i_raw, j_raw, cols = entry
+        # Apply offset then convert to 0-based
+        i = i_raw - 1 - offset
+        j = j_raw - 1 - offset
+        name_i = cols[1]
+        name_j = cols[3]
 
-            # Bounds / sanity checks before accessing sequence or creating atoms
-            n_seq = len(seq)
-            if i < 0 or j < 0 or i >= n_seq or j >= n_seq:
+        if i < 0 or j < 0 or i >= n_seq or j >= n_seq:
+            skipped_out_of_range += 1
+            if len(oor_examples) < 3:
+                oor_examples.append(raw.strip())
+            if verbose:
                 print(
-                    f"Warning: Distance restraint indices out of range (i={i+1}, j={j+1}, seq_len={n_seq}) in {filename}: '{line}' -> skipping"
+                    f"Warning: Distance restraint indices out of range (file_i={i_raw}, file_j={j_raw}, applied_offset={offset}, seq_len={n_seq}) in {filename}: '{raw.strip()}' -> skipping"
                 )
-                continue
+            continue
+
+        try:
             if has_explicit_distance:
                 dist = float(cols[4])
                 rest = s.restraints.create_restraint(
@@ -112,9 +170,29 @@ def _parse_distance_file(
                     atom2=s.index.atom(j, name_j, expected_resname=seq[j][-3:]),
                 )
             current.append(rest)
-    # Append trailing group if present
+            created += 1
+        except Exception as e:  # capture MELD indexing or creation errors
+            if verbose or not summarize:
+                print(f"Warning: Failed to create distance restraint for line '{raw.strip()}': {e}")
+
     if current:
         groups.append(s.restraints.create_restraint_group(current, 1))
+
+    if summarize:
+        summary_bits = []
+        if offset:
+            summary_bits.append(f"offset={offset}")
+        if skipped_out_of_range:
+            summary_bits.append(
+                f"skipped_out_of_range={skipped_out_of_range} (examples: {', '.join(oor_examples)})"
+            )
+        if malformed:
+            summary_bits.append(
+                f"malformed={malformed} (examples: {', '.join(malformed_examples)})"
+            )
+        if summary_bits and not verbose:
+            print(f"Distance parse summary for {filename}: created={created}, " + ", ".join(summary_bits))
+
     return groups
 
 
@@ -123,12 +201,24 @@ def get_dist_restraints(filename, s, scaler, ramp, seq):
 
     See `_parse_distance_file` for details.
     """
-    return _parse_distance_file(filename, s, scaler, ramp, seq, has_explicit_distance=False)
+    return _parse_distance_file(
+        filename, s, scaler, ramp, seq,
+        has_explicit_distance=False,
+        auto_offset=True,
+        summarize=True,
+        verbose=False,
+    )
 
 
 def get_dist_restraints_protein(filename, s, scaler, ramp, seq):
     """Backward-compatible wrapper for explicit distance restraints (protein)."""
-    return _parse_distance_file(filename, s, scaler, ramp, seq, has_explicit_distance=True)
+    return _parse_distance_file(
+        filename, s, scaler, ramp, seq,
+        has_explicit_distance=True,
+        auto_offset=True,
+        summarize=True,
+        verbose=False,
+    )
 
 
 # ---------------- Torsion restraint parsing ---------------- #
