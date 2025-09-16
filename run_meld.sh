@@ -61,25 +61,6 @@ if { [ -n "$GPUS" ] && [ -n "$MPI_GPUS" ]; } || { [ -n "$GPUS" ] && [ -n "$MULTI
   exit 1
 fi
 
-# Single multiplex run spanning multiple GPUs without MPI (one process, OpenMM auto visibility)
-if [ -n "$MULTI_GPUS" ]; then
-  export CUDA_VISIBLE_DEVICES="$MULTI_GPUS"
-  echo "Launching single multiplex run on GPUs: $MULTI_GPUS (non-MPI)" >&2
-  if [ "$BACKGROUND" -eq 1 ]; then
-    TS=$(date +%Y%m%d_%H%M%S)
-    SUBDIR="$RUNS_BASE/multigpu_${TS}"
-    mkdir -p "$SUBDIR"
-    LOG="$SUBDIR/remd.log"
-    echo "Background multi-GPU run -> $LOG" >&2
-    nohup bash -lc "$CONDA_ACTIVATE_CMD && cd $SUBDIR && ${CMD[*]}" > "$LOG" 2>&1 &
-    pid=$!; echo $pid > "$SUBDIR/pid"; echo "PID $pid" >&2
-  else
-    echo "Foreground multi-GPU run (${CMD[*]})" >&2
-    "${CMD[@]}"
-  fi
-  exit 0
-fi
-
 if [ ! -f "$ENV_FILE" ]; then
   echo "ERROR: Environment file '$ENV_FILE' not found." >&2
   exit 1
@@ -174,6 +155,25 @@ CMD_STRING="launch_remd_multiplex --platform CUDA --debug"
 RUNS_BASE="Runs/${RUN_TAG}"
 mkdir -p "$RUNS_BASE"
 export ENV_NAME BASE_CONDA CMD_STRING RUN_TAG SCRATCH_BLOCKS  # ensure wrapper sees these
+
+# Single multiplex run spanning multiple GPUs without MPI (one process, OpenMM auto visibility)
+if [ -n "$MULTI_GPUS" ]; then
+  export CUDA_VISIBLE_DEVICES="$MULTI_GPUS"
+  echo "Launching single multiplex run on GPUs: $MULTI_GPUS (non-MPI)" >&2
+  if [ "$BACKGROUND" -eq 1 ]; then
+    TS=$(date +%Y%m%d_%H%M%S)
+    SUBDIR="$RUNS_BASE/multigpu_${TS}"
+    mkdir -p "$SUBDIR"
+    LOG="$SUBDIR/remd.log"
+    echo "Background multi-GPU run -> $LOG" >&2
+    nohup bash -lc "$CONDA_ACTIVATE_CMD && cd $SUBDIR && ${CMD[*]}" > "$LOG" 2>&1 &
+    pid=$!; echo $pid > "$SUBDIR/pid"; echo "PID $pid" >&2
+  else
+    echo "Foreground multi-GPU run (${CMD[*]})" >&2
+    "${CMD[@]}"
+  fi
+  exit 0
+fi
 
 # Re-create MPI wrapper script with CMD_STRING usage (updated with per-rank GPU binding and safe Data/Logs handling)
 MPI_WRAPPER="remd_rank_wrapper.sh"

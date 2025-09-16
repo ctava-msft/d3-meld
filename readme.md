@@ -55,6 +55,17 @@ Run one main simulation rank per GPU; if using OpenMM / MELD with minor CPU help
 2. Run simulation (coordinated multi-GPU REMD via MPI):
    ```nohup bash -lc "./run_meld.sh --mpi-gpus 0,1 --scratch-blocks" > remd_mpi_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
+How To Re-run (foreground example)
+bash -lc "./run_meld.sh --multi-gpus 0,1"
+
+Background run
+nohup bash -lc "./run_meld.sh --multi-gpus 0,1 --scratch-blocks --background" > remd_multigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+
+Verify It’s Running
+ps -f | grep launch_remd_multiplex | grep -v grep
+nvidia-smi
+grep 'Running replica exchange step' Runs/run/multigpu_*/remd.log | head
+
    ```nohup bash -lc "./run_meld.sh --multi-gpus 0,1 --scratch-blocks" > remd_multigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
  conda activate d3-meld-2-env
