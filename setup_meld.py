@@ -166,4 +166,3 @@ def exec_meld_run():
 
 if __name__ == "__main__":
     exec_meld_run()
-    exec_meld_run()
