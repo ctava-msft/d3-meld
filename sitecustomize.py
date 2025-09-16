@@ -1,7 +1,8 @@
 """
 Auto-applied MELD RunOptions patch so extract_trajectory can access .solvation.
 
-Ensure this repository directory is on PYTHONPATH (running commands from repo root is usually enough).
+Ensure this repository directory is on PYTHONPATH (run commands from repo root or export PYTHONPATH=$PWD:$PYTHONPATH).
+Set SOLVATION_PATCH_DEBUG=1 to print confirmation when loaded.
 """
 import os
 try:
@@ -13,6 +14,9 @@ try:
             "solvation",
             property(lambda self: os.getenv("SOLVATION_MODE", "implicit")),
         )
+    if os.getenv("SOLVATION_PATCH_DEBUG") == "1":
+        print("[solvation-patch] sitecustomize applied; RunOptions has solvation =", hasattr(meld.RunOptions, "solvation"))
 except Exception:
-    # Silent: do not block interpreter startup
+    if os.getenv("SOLVATION_PATCH_DEBUG") == "1":
+        print("[solvation-patch] sitecustomize failed")
     pass

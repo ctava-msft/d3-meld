@@ -73,9 +73,13 @@ grep 'Running replica exchange step' Runs/run/multigpu_*/remd.log | head
 extract_trajectory extract_traj_dcd --replica 0 trajectory.00.dcd
 
 If you previously saw: AttributeError: 'RunOptions' object has no attribute 'solvation'
-- A version mismatch removed the field.
-- Fix: sitecustomize.py now injects a solvation property (default from SOLVATION_MODE env var or 'implicit').
-- Ensure you run the command from the project directory so sitecustomize is on PYTHONPATH.
+- Both sitecustomize.py and usercustomize.py now patch MELD.
+- Verify patch:
+  SOLVATION_PATCH_DEBUG=1 python -c "import meld; print('Has solvation:', hasattr(meld.RunOptions,'solvation'))"
+- Ensure repo root is on PYTHONPATH (run from root or: export PYTHONPATH=$PWD:$PYTHONPATH).
+- Then:
+  conda activate d3-meld-2-env
+  extract_trajectory extract_traj_dcd --replica 0 trajectory.00.dcd
 
 ## Troubleshooting
 - Check GPU visibility:
