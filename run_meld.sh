@@ -160,16 +160,26 @@ export ENV_NAME BASE_CONDA CMD_STRING RUN_TAG SCRATCH_BLOCKS  # ensure wrapper s
 if [ -n "$MULTI_GPUS" ]; then
   export CUDA_VISIBLE_DEVICES="$MULTI_GPUS"
   echo "Launching single multiplex run on GPUs: $MULTI_GPUS (non-MPI)" >&2
+  # Ensure Data store exists (user may have cleaned between runs)
+  if [ ! -f Data/data_store.dat ]; then
+    echo "[multi-gpus] Data/data_store.dat not found; running setup_meld.py" >&2
+    if [ -f setup_meld.py ]; then
+      python setup_meld.py || { echo "ERROR: setup_meld.py failed" >&2; exit 1; }
+    else
+      echo "ERROR: setup_meld.py missing and no data store present" >&2; exit 1
+    fi
+  fi
   if [ "$BACKGROUND" -eq 1 ]; then
     TS=$(date +%Y%m%d_%H%M%S)
     SUBDIR="$RUNS_BASE/multigpu_${TS}"
     mkdir -p "$SUBDIR"
     LOG="$SUBDIR/remd.log"
-    echo "Background multi-GPU run -> $LOG" >&2
-    nohup bash -lc "$CONDA_ACTIVATE_CMD && cd $SUBDIR && ${CMD[*]}" > "$LOG" 2>&1 &
+    echo "Background multi-GPU run -> $LOG (executing from project root to keep relative Data/)" >&2
+    nohup bash -lc "$CONDA_ACTIVATE_CMD && ${CMD[*]}" > "$LOG" 2>&1 &
     pid=$!; echo $pid > "$SUBDIR/pid"; echo "PID $pid" >&2
   else
-    echo "Foreground multi-GPU run (${CMD[*]})" >&2
+    echo "Foreground multi-GPU run (${CMD[*]}) logging to stdout (Data in place)" >&2
+    # Optional: allow user to specify a log file by redirecting externally
     "${CMD[@]}"
   fi
   exit 0
