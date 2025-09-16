@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from azure.identity import ManagedIdentityCredential
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from azure.core.exceptions import ResourceExistsError, ServiceRequestError, ServiceResponseError, ClientAuthenticationError
+from azure.core.exceptions import ResourceNotFoundError, HttpResponseError
 
 
 @dataclass
@@ -120,6 +121,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--managed-identity", action="store_true", help="Use Managed Identity instead of DefaultAzureCredential chain (disables interactive login).")
     p.add_argument("--mi-client-id", help="Client ID of user-assigned managed identity (optional).")
     p.add_argument("--timeout", type=int, default=0, help="Overall timeout in seconds (0 = no timeout).")
+    p.add_argument("--create-container", action="store_true", help="Create container if it does not exist.")
+    p.add_argument("--show-claims", action="store_true", help="Print decoded AAD access token claims for debugging.")
     return p.parse_args()
 
 
@@ -129,6 +132,14 @@ def build_account_url(args: argparse.Namespace) -> str:
     if args.account_name:
         return f"https://{args.account_name}.blob.core.windows.net"
     raise SystemExit("Must provide either --account-url or --account-name")
+
+
+def _decode_jwt_segment(segment: str) -> dict:
+    try:
+        padding = '=' * (-len(segment) % 4)
+        return json.loads(base64.urlsafe_b64decode(segment + padding).decode("utf-8"))
+    except Exception:
+        return {}
 
 
 def main():
@@ -168,17 +179,15 @@ def main():
         credential = DefaultAzureCredential()
 
     # Validate tenant only if we have a desired tenant_id
+    token_claims = {}
     if tenant_id:
         try:
             token = credential.get_token("https://storage.azure.com/.default").token
             parts = token.split('.')
             if len(parts) < 2:
                 raise ValueError("Unexpected token format")
-            payload_segment = parts[1]
-            padding = '=' * (-len(payload_segment) % 4)
-            payload_json = base64.urlsafe_b64decode(payload_segment + padding).decode('utf-8')
-            payload = json.loads(payload_json)
-            tid = payload.get('tid') or payload.get('tenantId')
+            token_claims = _decode_jwt_segment(parts[1])
+            tid = token_claims.get('tid') or token_claims.get('tenantId')
             if tid != tenant_id:
                 print(f"ERROR: Acquired token tenant {tid} does not match requested tenant {tenant_id}", file=sys.stderr)
                 sys.exit(3)
@@ -186,13 +195,43 @@ def main():
             print(f"ERROR: Failed to validate tenant id: {ex}", file=sys.stderr)
             sys.exit(3)
 
+    if args.show_claims and token_claims:
+        print("Token claims (subset):")
+        for k in ("tid", "oid", "sub", "appid", "upn", "aud"):
+            if k in token_claims:
+                print(f"  {k}: {token_claims[k]}")
+
     blob_service = BlobServiceClient(account_url=account_url, credential=credential)
     try:
         container_client = blob_service.get_container_client(args.container)
-        # Verify access early
         container_client.get_container_properties()
+    except ResourceNotFoundError:
+        if args.create_container:
+            try:
+                print(f"Container '{args.container}' not found. Creating...")
+                blob_service.create_container(args.container)
+                print("Container created.")
+            except Exception as ex:  # pylint: disable=broad-except
+                print(f"ERROR: Failed to create container '{args.container}': {ex}", file=sys.stderr)
+                sys.exit(2)
+        else:
+            print(f"ERROR: Container '{args.container}' not found. Use --create-container to create it.", file=sys.stderr)
+            sys.exit(2)
     except ClientAuthenticationError as auth_err:
         print(f"ERROR: Authentication / authorization failure accessing container '{args.container}': {auth_err}", file=sys.stderr)
+        if args.show_claims and token_claims:
+            print("Claims shown above may help diagnose role assignment (e.g. need 'Storage Blob Data Contributor').")
+        sys.exit(2)
+    except HttpResponseError as hre:
+        code = getattr(hre, "error_code", None)
+        if code == "AuthorizationFailure":
+            print(f"ERROR: AuthorizationFailure accessing '{args.container}'. Principal may lack role 'Storage Blob Data Contributor' or 'Storage Blob Data Owner'.", file=sys.stderr)
+            if args.show_claims and token_claims:
+                oid = token_claims.get("oid")
+                appid = token_claims.get("appid")
+                print(f"Principal object id: {oid or '(n/a)'}  AppId (if app): {appid or '(n/a)'}")
+            sys.exit(2)
+        print(f"ERROR: Unable to access container '{args.container}': {hre}", file=sys.stderr)
         sys.exit(2)
     except Exception as ex:  # pylint: disable=broad-except
         print(f"ERROR: Unable to access container '{args.container}': {ex}", file=sys.stderr)
