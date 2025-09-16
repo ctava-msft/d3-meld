@@ -147,10 +147,19 @@ def exec_meld_run():
         print("Restraints disabled by configuration (ENABLE_RESTRAINTS=false).")
 
     # Use configurable run options
-    options = meld.RunOptions(
-        timesteps=cfg.timesteps,
-        minimize_steps=cfg.minimize_steps,
-    )
+    try:
+        options = meld.RunOptions(
+            timesteps=cfg.timesteps,
+            minimize_steps=cfg.minimize_steps,
+            solvation=cfg.solvation_mode,  # preferred if supported
+        )
+    except TypeError:
+        options = meld.RunOptions(
+            timesteps=cfg.timesteps,
+            minimize_steps=cfg.minimize_steps,
+        )
+        # Backward compatibility: attach attribute for tools expecting it
+        setattr(options, "solvation", cfg.solvation_mode)
 
     # DataStore initialization
     store = vault.DataStore(gen_state(s, 0, cfg), cfg.n_replicas, s.get_pdb_writer(), block_size=cfg.block_size)
