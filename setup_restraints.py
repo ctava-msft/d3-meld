@@ -72,10 +72,22 @@ def _parse_distance_file(
                 raise ValueError(f"Line expects 5 columns (i atom_i j atom_j dist) in {filename}: '{line}'")
             if not has_explicit_distance and len(cols) < 4:
                 raise ValueError(f"Line expects 4 columns (i atom_i j atom_j) in {filename}: '{line}'")
-            i = int(cols[0]) - 1
+            try:
+                i = int(cols[0]) - 1
+                j = int(cols[2]) - 1
+            except ValueError:
+                print(f"Warning: Non-integer residue index in {filename}: '{line}' -> skipping line")
+                continue
             name_i = cols[1]
-            j = int(cols[2]) - 1
             name_j = cols[3]
+
+            # Bounds / sanity checks before accessing sequence or creating atoms
+            n_seq = len(seq)
+            if i < 0 or j < 0 or i >= n_seq or j >= n_seq:
+                print(
+                    f"Warning: Distance restraint indices out of range (i={i+1}, j={j+1}, seq_len={n_seq}) in {filename}: '{line}' -> skipping"
+                )
+                continue
             if has_explicit_distance:
                 dist = float(cols[4])
                 rest = s.restraints.create_restraint(
