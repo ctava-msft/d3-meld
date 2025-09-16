@@ -1,30 +1,3 @@
-## Recipe
-1. Install Miniconda
-2. Create env from provided spec:
-   conda env create -f conda.yaml
-3. Activate:
-   conda activate d3-meld-env
-4. Run meld setup script:
-   python setup_meld.py
-5. Run simulation (coordinated multi-GPU REMD via MPI):
-   ```nohup bash -lc "./run_meld.sh --mpi-gpus 0,1 --scratch-blocks" > remd_mpi_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
-
-## Flag summary (selected)
-- --mpi-gpus 0,1          Run coordinated REMD across listed GPUs.
-- --scratch-blocks        Write per-rank NetCDF Blocks in rank-specific scratch dirs; merge on exit (prevents block_000000.nc contention).
-- --force-reinit          Backup and recreate Data directory (use once after errors or to start fresh).
-- --clean-data            Backup existing Data then start fresh (less aggressive than force if already clean of partial files).
-- --gpus 0,1              Launch independent (non-MPI) runs on listed GPUs.
-
-
-## Troubleshooting
-- Check GPU visibility:
-  nvidia-smi
-
-## Monitoring
-
-grep 'Running replica exchange step ' ./remd.log | tail -n 40
-
 ## Compute Resources
 
 setup_meld.py:
@@ -67,3 +40,29 @@ Local (ephemeral) disk 256 GB is shared; no fixed per‑GPU split (treat as comm
 Practical guidance:
 
 Run one main simulation rank per GPU; if using OpenMM / MELD with minor CPU helpers set OMP_NUM_THREADS (or MKL_NUM_THREADS) to 8–16, not full 40, to leave headroom for I/O and the other rank.
+
+## Flag summary (selected)
+- --mpi-gpus 0,1          Run coordinated REMD across listed GPUs.
+- --scratch-blocks        Write per-rank NetCDF Blocks in rank-specific scratch dirs; merge on exit (prevents block_000000.nc contention).
+- --force-reinit          Backup and recreate Data directory (use once after errors or to start fresh).
+- --clean-data            Backup existing Data then start fresh (less aggressive than force if already clean of partial files).
+- --gpus 0,1              Launch independent (non-MPI) runs on listed GPUs.
+
+
+## Recipe
+1. Install Miniconda
+2. Run simulation (coordinated multi-GPU REMD via MPI):
+   ```nohup bash -lc "./run_meld.sh --mpi-gpus 0,1 --scratch-blocks" > remd_mpi_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
+
+
+ conda activate d3-meld-2-env
+
+
+## Troubleshooting
+- Check GPU visibility:
+  nvidia-smi
+
+## Monitoring
+
+grep 'Running replica exchange step ' ./remd.log | tail -n 40
+

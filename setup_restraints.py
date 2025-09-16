@@ -129,31 +129,46 @@ def process_phi_dat_file(filename, s, seq):
     """
     torsion_rests = []
     tor_scaler = s.restraints.create_scaler('nonlinear', alpha_min=0.4, alpha_max=1.0, factor=4.0)
+    n_seq = len(seq)
     with open(filename, 'r') as file:
-        for raw in file:
+        for line_no, raw in enumerate(file, start=1):
             if not raw.strip():
                 continue
             cols = raw.split()
             if len(cols) < 4:
-                raise ValueError(f"Invalid phi line (need >=4 columns): '{raw.strip()}'")
-            res = int(cols[1]) - 1
+                raise ValueError(f"Invalid phi line (need >=4 columns) at {filename}:{line_no}: '{raw.strip()}'")
+            try:
+                res = int(cols[1]) - 1
+            except ValueError:
+                print(f"Warning: Non-integer residue index in phi file {filename}:{line_no}: '{cols[1]}' -> skipping")
+                continue
+            # Boundary / validity checks
+            if res <= 0:  # cannot build phi for first residue (needs i-1)
+                print(f"Warning: Phi torsion for residue {res+1} ignored (needs previous residue) {filename}:{line_no}")
+                continue
+            if res >= n_seq:
+                print(f"Warning: Phi torsion residue {res+1} out of range (sequence length {n_seq}) {filename}:{line_no} -> skipping")
+                continue
             phi_min = float(cols[2])
             phi_max = float(cols[3])
             phi_avg = (phi_max + phi_min) / 2.0
             phi_sd = abs(phi_avg - phi_min)
-            torsion_rests.append(
-                s.restraints.create_restraint(
-                    'torsion',
-                    tor_scaler,
-                    phi=phi_avg * u.degree,
-                    delta_phi=phi_sd * u.degree,
-                    k=0.1 * u.kilojoule_per_mole / u.degree ** 2,
-                    atom1=s.index.atom(res - 1, 'C', expected_resname=seq[res - 1][-3:]),
-                    atom2=s.index.atom(res, 'N', expected_resname=seq[res][-3:]),
-                    atom3=s.index.atom(res, 'CA', expected_resname=seq[res][-3:]),
-                    atom4=s.index.atom(res, 'C', expected_resname=seq[res][-3:]),
+            try:
+                torsion_rests.append(
+                    s.restraints.create_restraint(
+                        'torsion',
+                        tor_scaler,
+                        phi=phi_avg * u.degree,
+                        delta_phi=phi_sd * u.degree,
+                        k=0.1 * u.kilojoule_per_mole / u.degree ** 2,
+                        atom1=s.index.atom(res - 1, 'C', expected_resname=seq[res - 1][-3:]),
+                        atom2=s.index.atom(res, 'N', expected_resname=seq[res][-3:]),
+                        atom3=s.index.atom(res, 'CA', expected_resname=seq[res][-3:]),
+                        atom4=s.index.atom(res, 'C', expected_resname=seq[res][-3:]),
+                    )
                 )
-            )
+            except Exception as e:  # catch any MELD indexing error
+                print(f"Warning: Failed to create phi restraint for residue {res+1} at {filename}:{line_no}: {e}")
     return torsion_rests
 
 
@@ -165,29 +180,43 @@ def process_psi_file(psi_filename, s, seq):
     """
     torsion_rests = []
     tor_scaler = s.restraints.create_scaler('nonlinear', alpha_min=0.4, alpha_max=1.0, factor=4.0)
+    n_seq = len(seq)
     with open(psi_filename, 'r') as file:
-        for raw in file:
+        for line_no, raw in enumerate(file, start=1):
             if not raw.strip():
                 continue
             cols = raw.split()
             if len(cols) < 4:
-                raise ValueError(f"Invalid psi line (need >=4 columns): '{raw.strip()}'")
-            res = int(cols[1]) - 1
+                raise ValueError(f"Invalid psi line (need >=4 columns) at {psi_filename}:{line_no}: '{raw.strip()}'")
+            try:
+                res = int(cols[1]) - 1
+            except ValueError:
+                print(f"Warning: Non-integer residue index in psi file {psi_filename}:{line_no}: '{cols[1]}' -> skipping")
+                continue
+            if res < 0:
+                print(f"Warning: Psi torsion residue index {res+1} invalid (<1) {psi_filename}:{line_no} -> skipping")
+                continue
+            if res + 1 >= n_seq:
+                print(f"Warning: Psi torsion for residue {res+1} requires residue {res+2} which is out of range (sequence length {n_seq}) {psi_filename}:{line_no} -> skipping")
+                continue
             psi_min = float(cols[2])
             psi_max = float(cols[3])
             psi_avg = (psi_max + psi_min) / 2.0
             psi_sd = abs(psi_avg - psi_min)
-            torsion_rests.append(
-                s.restraints.create_restraint(
-                    'torsion',
-                    tor_scaler,
-                    phi=psi_avg * u.degree,
-                    delta_phi=psi_sd * u.degree,
-                    k=0.1 * u.kilojoule_per_mole / u.degree ** 2,
-                    atom1=s.index.atom(res, 'N', expected_resname=seq[res][-3:]),
-                    atom2=s.index.atom(res, 'CA', expected_resname=seq[res][-3:]),
-                    atom3=s.index.atom(res, 'C', expected_resname=seq[res][-3:]),
-                    atom4=s.index.atom(res + 1, 'N', expected_resname=seq[res + 1][-3:]),
+            try:
+                torsion_rests.append(
+                    s.restraints.create_restraint(
+                        'torsion',
+                        tor_scaler,
+                        phi=psi_avg * u.degree,
+                        delta_phi=psi_sd * u.degree,
+                        k=0.1 * u.kilojoule_per_mole / u.degree ** 2,
+                        atom1=s.index.atom(res, 'N', expected_resname=seq[res][-3:]),
+                        atom2=s.index.atom(res, 'CA', expected_resname=seq[res][-3:]),
+                        atom3=s.index.atom(res, 'C', expected_resname=seq[res][-3:]),
+                        atom4=s.index.atom(res + 1, 'N', expected_resname=seq[res + 1][-3:]),
+                    )
                 )
-            )
+            except Exception as e:
+                print(f"Warning: Failed to create psi restraint for residue {res+1} at {psi_filename}:{line_no}: {e}")
     return torsion_rests
