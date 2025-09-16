@@ -4,10 +4,13 @@ import os
 import sys
 import time
 import mimetypes
+import base64
+import json
 from dataclasses import dataclass
 from typing import List, Optional, Iterable, Tuple
 
 from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from azure.core.exceptions import ResourceExistsError, ServiceRequestError, ServiceResponseError, ClientAuthenticationError
 
@@ -92,6 +95,11 @@ def upload_one(blob_service: BlobServiceClient,
             return UploadResult(path=file_path, blob_name=blob_name, size=size, success=False, error=str(ex), elapsed=time.time() - start)
 
 
+def load_env_file():
+    # Use python-dotenv to load .env (does not override existing env vars by default)
+    load_dotenv(override=False)
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Upload files/directories to an Azure Blob container using Entra ID auth.")
     group_src = p.add_mutually_exclusive_group(required=True)
@@ -107,7 +115,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--if-none-match", help="ETag condition for upload (e.g. '*').")
     p.add_argument("--dry-run", action="store_true", help="List what would be uploaded without performing uploads.")
     p.add_argument("--verbose", action="store_true", help="Verbose logging.")
-    p.add_argument("--tenant-id", help="Optional tenant ID to constrain interactive auth context.")
+    p.add_argument("--tenant-id", help="Tenant ID (overrides AZURE_TENANT_ID env/.env if provided).")
     p.add_argument("--timeout", type=int, default=0, help="Overall timeout in seconds (0 = no timeout).")
     return p.parse_args()
 
@@ -124,11 +132,34 @@ def main():
     args = parse_args()
     account_url = build_account_url(args)
 
+    # Load .env variables (non-destructive: existing os.environ wins)
+    load_env_file()
+
+    # Determine tenant id precedence: CLI flag > env var AZURE_TENANT_ID > fail
+    tenant_id = args.tenant_id or os.environ.get("AZURE_TENANT_ID")
+    if not tenant_id:
+        print("ERROR: Tenant ID not provided. Use --tenant-id or set AZURE_TENANT_ID in environment/.env", file=sys.stderr)
+        sys.exit(3)
+
     # Acquire credential (DefaultAzureCredential covers Managed Identity, CLI, VS Code, etc.)
-    cred_kwargs = {}
-    if args.tenant_id:
-        cred_kwargs["tenant_id"] = args.tenant_id
-    credential = DefaultAzureCredential(**cred_kwargs)
+    credential = DefaultAzureCredential(tenant_id=tenant_id)
+
+    # Validate the token's tenant (defense-in-depth) before performing operations
+    try:
+        token = credential.get_token("https://storage.azure.com/.default").token
+        parts = token.split('.')
+        if len(parts) < 2:
+            raise ValueError("Unexpected token format")
+        payload_b64 = parts[1] + '==='  # pad for base64
+        payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
+        payload = json.loads(payload_json)
+        tid = payload.get('tid') or payload.get('tenantId')
+        if tid != tenant_id:
+            print(f"ERROR: Acquired token tenant {tid} does not match requested tenant {tenant_id}", file=sys.stderr)
+            sys.exit(3)
+    except Exception as ex:  # pylint: disable=broad-except
+        print(f"ERROR: Failed to validate tenant id: {ex}", file=sys.stderr)
+        sys.exit(3)
 
     blob_service = BlobServiceClient(account_url=account_url, credential=credential)
     try:
