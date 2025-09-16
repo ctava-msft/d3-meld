@@ -128,11 +128,11 @@ if [ $CLEAN_DATA -eq 1 ] && [ $FORCE_REINIT -eq 0 ]; then
 fi
 
 if [ ! -d Data ] || [ ! -d Logs ]; then
-  echo "Running initial MELD setup (run_meld.py)" >&2
-  if [ -f run_meld.py ]; then
-    python run_meld.py
+  echo "Running initial MELD setup (setup_meld.py)" >&2
+  if [ -f setup_meld.py ]; then
+    python setup_meld.py
   else
-    echo "WARNING: run_meld.py not found; skipping setup" >&2
+    echo "WARNING: setup_meld.py not found; skipping setup" >&2
   fi
 fi
 
@@ -183,8 +183,8 @@ if [ "$RANK" = 0 ] && [ ! -d Data ]; then
   mkdir -p Data/Blocks
 fi
 if [ "$RANK" = 0 ] && [ ! -f Data/data_store.dat ]; then
-  echo "[rank 0] Initializing data store via run_meld.py" >&2
-  [ -f run_meld.py ] && python run_meld.py || echo "[rank 0] WARNING: run_meld.py missing or failed" >&2
+  echo "[rank 0] Initializing data store via setup_meld.py" >&2
+  [ -f setup_meld.py ] && python setup_meld.py || echo "[rank 0] WARNING: setup_meld.py missing or failed" >&2
 fi
 
 # Barrier for data_store.dat
