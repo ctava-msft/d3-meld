@@ -16,3 +16,4 @@ dependencies:
   - scipy
   - parmed
   - cudatoolkit
+  - python-dotenv>=1.0
