@@ -30,6 +30,8 @@ GPU_LIST=""  # optional comma list
 DRY_RUN=0
 DEBUG=0
 EXTRA_MPI_ARGS=""
+AUTO_INSTALL_MPI=0  # if set (--auto-install-mpi) attempt conda install openmpi mpi4py when mpirun missing
+SUGGEST_THREADS=0   # if set, will print OMP/MKL thread suggestions
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,8 +44,10 @@ while [[ $# -gt 0 ]]; do
     --force-setup) FORCE_SETUP=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --debug) DEBUG=1 ;;
-    --mpi-arg) shift; EXTRA_MPI_ARGS+=" ${1:-}" || true ;;
-    --mpi-arg=*) EXTRA_MPI_ARGS+=" ${1#--mpi-arg=}" ;;
+  --mpi-arg) shift; EXTRA_MPI_ARGS+=" ${1:-}" || true ;;
+  --mpi-arg=*) EXTRA_MPI_ARGS+=" ${1#--mpi-arg=}" ;;
+  --auto-install-mpi) AUTO_INSTALL_MPI=1 ;;
+  --suggest-threads) SUGGEST_THREADS=1 ;;
     *.yml|*.yaml) ENV_FILE="$1" ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
@@ -95,7 +99,37 @@ if command -v mpirun &>/dev/null; then
   echo "[sanity] mpirun --version" >&2
   mpirun --version | head -n 1 || true
 else
-  echo "ERROR: mpirun not found" >&2; exit 1
+  if [[ $AUTO_INSTALL_MPI -eq 1 ]]; then
+    echo "[sanity] mpirun not found – attempting conda install (openmpi, mpi4py)" >&2
+    if ! command -v conda &>/dev/null; then
+      echo "ERROR: --auto-install-mpi requested but conda not on PATH" >&2; exit 1
+    fi
+    # Activate base to ensure install goes to correct prefix
+    # shellcheck disable=SC1091
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda install -y -c conda-forge openmpi mpi4py || { echo "ERROR: Failed to install Open MPI via conda" >&2; exit 1; }
+  else
+    cat >&2 <<'EOM'
+ERROR: mpirun not found on PATH.
+
+Remedies:
+  1) Conda (recommended):
+       conda install -c conda-forge openmpi mpi4py
+  2) System packages (Ubuntu):
+       sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev && pip install mpi4py
+  3) Source build (no sudo): download Open MPI and build with --prefix=$HOME/.local/openmpi; add bin to PATH.
+
+Re-run with --auto-install-mpi to attempt automated conda install.
+EOM
+    exit 1
+  fi
+  # Re-check after install
+  if command -v mpirun &>/dev/null; then
+    echo "[sanity] mpirun --version" >&2
+    mpirun --version | head -n 1 || true
+  else
+    echo "ERROR: mpirun still missing after attempted install" >&2; exit 1
+  fi
 fi
 
 if command -v scontrol &>/dev/null; then
@@ -129,6 +163,23 @@ else
   fi
 fi
 echo "[info] MPI ranks (np) = $NP" >&2
+
+if [[ $SUGGEST_THREADS -eq 1 ]]; then
+  if [[ -n "${N_GPU:-}" ]] && [[ $NP -gt 0 ]]; then
+    # crude heuristic: total logical cores / np if lscpu present
+    if command -v lscpu &>/dev/null; then
+      cores=$(lscpu | awk -F: '/^CPU\(s\)/{gsub(/ /,"");print $2;exit}') || cores=""
+      if [[ -n "$cores" ]]; then
+        per=$(( cores / NP ))
+        suggested=$(( per/2 ))
+        if (( suggested < 1 )); then suggested=1; fi
+        echo "[hint] Suggest setting OMP_NUM_THREADS=$suggested (half of cores/replica)" >&2
+      fi
+    else
+      echo "[hint] Use: export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8  (adjust per HW)" >&2
+    fi
+  fi
+fi
 
 # Activate env (after determining to reduce noise on dry-run reporting)
 activate_conda
