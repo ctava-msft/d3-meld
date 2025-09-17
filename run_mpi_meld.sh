@@ -32,6 +32,7 @@ DEBUG=0
 EXTRA_MPI_ARGS=""
 AUTO_INSTALL_MPI=0  # if set (--auto-install-mpi) attempt conda install openmpi mpi4py when mpirun missing
 SUGGEST_THREADS=0   # if set, will print OMP/MKL thread suggestions
+MPI_CMD_BIN=""     # resolved launcher (mpirun or mpiexec)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -95,40 +96,67 @@ else
   echo "[warn] nvidia-smi not found on PATH" >&2
 fi
 
-if command -v mpirun &>/dev/null; then
-  echo "[sanity] mpirun --version" >&2
-  mpirun --version | head -n 1 || true
+detect_mpi() {
+  # Prefer mpirun then mpiexec
+  if command -v mpirun &>/dev/null; then
+    MPI_CMD_BIN="mpirun"; return 0
+  fi
+  if command -v mpiexec &>/dev/null; then
+    MPI_CMD_BIN="mpiexec"; return 0
+  fi
+  # search conda env bin (if python present)
+  local pybin
+  pybin=$(command -v python || true)
+  if [[ -n "$pybin" ]]; then
+    local envbin
+    envbin=$(dirname "$pybin")
+    for cand in mpirun mpiexec; do
+      if [[ -x "$envbin/$cand" ]]; then
+        MPI_CMD_BIN="$cand"; return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+if detect_mpi; then
+  echo "[sanity] $MPI_CMD_BIN --version" >&2
+  "$MPI_CMD_BIN" --version 2>&1 | head -n 1 || true
 else
   if [[ $AUTO_INSTALL_MPI -eq 1 ]]; then
-    echo "[sanity] mpirun not found – attempting conda install (openmpi, mpi4py)" >&2
+    echo "[sanity] No mpirun/mpiexec found – attempting conda install (openmpi, mpi4py)" >&2
     if ! command -v conda &>/dev/null; then
       echo "ERROR: --auto-install-mpi requested but conda not on PATH" >&2; exit 1
     fi
-    # Activate base to ensure install goes to correct prefix
     # shellcheck disable=SC1091
     source "$(conda info --base)/etc/profile.d/conda.sh"
-    conda install -y -c conda-forge openmpi mpi4py || { echo "ERROR: Failed to install Open MPI via conda" >&2; exit 1; }
+    conda install -y -c conda-forge openmpi mpi4py || {
+      echo "[warn] openmpi install failed – retrying with mpich" >&2
+      conda install -y -c conda-forge mpich mpi4py || { echo "ERROR: Failed to install any MPI implementation" >&2; exit 1; }
+    }
+    hash -r
+    if ! detect_mpi; then
+      echo "ERROR: mpirun/mpiexec still missing after attempted install" >&2
+      echo "       Check conda env bin path and that openmpi wasn't installed as external stub." >&2
+      echo "       Run: conda list | grep -E 'openmpi|mpich'" >&2
+      exit 1
+    fi
+    echo "[sanity] Using detected $MPI_CMD_BIN after install" >&2
+    "$MPI_CMD_BIN" --version 2>&1 | head -n 1 || true
   else
     cat >&2 <<'EOM'
-ERROR: mpirun not found on PATH.
+ERROR: No mpirun or mpiexec found on PATH.
 
 Remedies:
-  1) Conda (recommended):
-       conda install -c conda-forge openmpi mpi4py
-  2) System packages (Ubuntu):
-       sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev && pip install mpi4py
-  3) Source build (no sudo): download Open MPI and build with --prefix=$HOME/.local/openmpi; add bin to PATH.
+  1) Conda Open MPI:   conda install -c conda-forge openmpi mpi4py
+     (If you later see build 'external', it is a stub; instead try: conda install -c conda-forge 'openmpi=4.1.*=ha1ae619_*')
+  2) Conda MPICH:      conda install -c conda-forge mpich mpi4py
+  3) System (Ubuntu):  sudo apt-get install -y openmpi-bin libopenmpi-dev && pip install mpi4py
+  4) Source build:     download Open MPI tarball, ./configure --prefix=$HOME/.local/openmpi && make -j && make install
 
-Re-run with --auto-install-mpi to attempt automated conda install.
+Re-run with --auto-install-mpi to perform a conda install automatically.
 EOM
     exit 1
-  fi
-  # Re-check after install
-  if command -v mpirun &>/dev/null; then
-    echo "[sanity] mpirun --version" >&2
-    mpirun --version | head -n 1 || true
-  else
-    echo "ERROR: mpirun still missing after attempted install" >&2; exit 1
   fi
 fi
 
@@ -218,7 +246,7 @@ if [[ ! -f "$LAUNCH_SCRIPT" ]]; then
   echo "ERROR: $LAUNCH_SCRIPT not found (expected in current directory)" >&2; exit 1
 fi
 
-MPI_CMD=(mpirun -np "$NP")
+MPI_CMD=("$MPI_CMD_BIN" -np "$NP")
 if [[ -n "$EXTRA_MPI_ARGS" ]]; then
   # shellcheck disable=SC2206
   EXTRA_SPLIT=($EXTRA_MPI_ARGS)
