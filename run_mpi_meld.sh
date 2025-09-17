@@ -116,6 +116,20 @@ detect_mpi() {
       fi
     done
   fi
+  # search common prefixes (OpenMPI or MPICH source installs)
+  for prefix in "$HOME/.local/openmpi" "$HOME/.local/opt/openmpi" \
+                "/usr/lib/x86_64-linux-gnu/openmpi" \
+                "/opt/ompi" "/opt/openmpi"; do
+    if [[ -d "$prefix/bin" ]]; then
+      for cand in mpirun mpiexec; do
+        if [[ -x "$prefix/bin/$cand" ]]; then
+          # prepend to PATH for remainder of script
+          export PATH="$prefix/bin:$PATH"
+          MPI_CMD_BIN="$cand"; return 0
+        fi
+      done
+    fi
+  done
   return 1
 }
 
@@ -130,16 +144,19 @@ else
     fi
     # shellcheck disable=SC1091
     source "$(conda info --base)/etc/profile.d/conda.sh"
-    conda install -y -c conda-forge openmpi mpi4py || {
-      echo "[warn] openmpi install failed – retrying with mpich" >&2
-      conda install -y -c conda-forge mpich mpi4py || { echo "ERROR: Failed to install any MPI implementation" >&2; exit 1; }
-    }
+    OPENMPI_INSTALL_FAILED=0
+    conda install -y -c conda-forge openmpi mpi4py || OPENMPI_INSTALL_FAILED=1
     hash -r
     if ! detect_mpi; then
-      echo "ERROR: mpirun/mpiexec still missing after attempted install" >&2
-      echo "       Check conda env bin path and that openmpi wasn't installed as external stub." >&2
-      echo "       Run: conda list | grep -E 'openmpi|mpich'" >&2
-      exit 1
+      if [[ $OPENMPI_INSTALL_FAILED -eq 1 ]]; then
+        echo "[warn] openmpi install failed – attempting MPICH+mpi4py" >&2
+      else
+        echo "[warn] OpenMPI installed but no mpirun/mpiexec found (likely external stub) – installing MPICH fallback" >&2
+        conda remove -y openmpi mpi || true
+      fi
+      conda install -y -c conda-forge mpich mpi4py || { echo "ERROR: Failed to install MPICH" >&2; exit 1; }
+      hash -r
+      detect_mpi || { echo "ERROR: mpirun/mpiexec still missing after OpenMPI+MPICH attempts" >&2; exit 1; }
     fi
     echo "[sanity] Using detected $MPI_CMD_BIN after install" >&2
     "$MPI_CMD_BIN" --version 2>&1 | head -n 1 || true
