@@ -57,11 +57,12 @@ Run one main simulation rank per GPU; if using OpenMM / MELD with minor CPU help
 
 ## MPI Multi-GPU Launch
 
-New helper `run_mpi_meld.sh` launches one MELD replica per GPU via MPI:
+New script `run_mpi_meld.sh` launches one MELD replica per GPU via MPI:
 
 ```
 ./run_mpi_meld.sh                # auto-detect GPUs, mpirun -np=min(30, n_gpus)
 ./run_mpi_meld.sh --gpus 0,1,2,3  # restrict to listed GPUs
+./run_mpi_meld.sh --gpus 0,1 --resume
 ./run_mpi_meld.sh --np 16         # set explicit MPI ranks (round‑robin GPUs)
 ./run_mpi_meld.sh --resume        # skip rebuilding Data store if present
 ./run_mpi_meld.sh --dry-run       # show command only
@@ -70,7 +71,6 @@ New helper `run_mpi_meld.sh` launches one MELD replica per GPU via MPI:
 Pre-flight sanity checks executed:
 * `nvidia-smi -L`
 * `mpirun --version`
-* (Slurm) `scontrol show nodes | grep -E "Gres|AllocTRES"`
 
 It invokes:
 
@@ -125,7 +125,9 @@ ps -f | grep launch_remd_multiplex | grep -v grep
 nvidia-smi
 grep 'Running replica exchange step' Runs/run/multigpu_*/remd.log | head
 
-   ```nohup bash -lc "./run_meld.sh --multi-gpus 0,1 --scratch-blocks" > remd_multigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
+   ```nohup bash -lc "./run_meld.sh --multi-gpus 0,1 --scratch-blocks" > remd_multigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```v
+
+  ```nohup bash -lc "./run_mpi_meld.sh --gpus 0,1 --np 2" > remd_mpigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
 ## Extracting trajectory
  conda activate d3-meld-2-env

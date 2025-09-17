@@ -33,6 +33,7 @@ EXTRA_MPI_ARGS=""
 AUTO_INSTALL_MPI=0  # if set (--auto-install-mpi) attempt conda install openmpi mpi4py when mpirun missing
 SUGGEST_THREADS=0   # if set, will print OMP/MKL thread suggestions
 MPI_CMD_BIN=""     # resolved launcher (mpirun or mpiexec)
+ADD_TIMESTAMPS=0    # if set (--add-timestamps) run timestamp post-processing after job
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,6 +50,7 @@ while [[ $# -gt 0 ]]; do
   --mpi-arg=*) EXTRA_MPI_ARGS+=" ${1#--mpi-arg=}" ;;
   --auto-install-mpi) AUTO_INSTALL_MPI=1 ;;
   --suggest-threads) SUGGEST_THREADS=1 ;;
+  --add-timestamps) ADD_TIMESTAMPS=1 ;;
     *.yml|*.yaml) ENV_FILE="$1" ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
@@ -272,4 +274,22 @@ if [[ $DRY_RUN -eq 1 ]]; then
   exit 0
 fi
 
-exec "${MPI_CMD[@]}"
+"${MPI_CMD[@]}"
+MPI_STATUS=$?
+
+if [[ $MPI_STATUS -ne 0 ]]; then
+  echo "[run] MPI job exited with status $MPI_STATUS" >&2
+else
+  echo "[run] MPI job completed successfully" >&2
+fi
+
+if [[ $ADD_TIMESTAMPS -eq 1 ]]; then
+  if [[ -f timestamp_log_lines.py ]]; then
+    echo "[post] Adding timestamps to remd_*.log" >&2
+    python timestamp_log_lines.py --glob 'remd_*.log' || echo "[post] Timestamping failed" >&2
+  else
+    echo "[post] timestamp_log_lines.py not found; skipping" >&2
+  fi
+fi
+
+exit $MPI_STATUS
