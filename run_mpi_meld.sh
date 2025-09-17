@@ -4,7 +4,7 @@ set -euo pipefail
 # run_mpi_meld.sh
 # Purpose: Launch a MELD REMD job across multiple GPUs using MPI (one rank per GPU).
 # Combines logic from run_meld.sh (conda + setup) and run_gpu_meld.sh (per-rank GPU binding).
-# Adds pre-flight sanity checks for GPUs, MPI, and (if present) Slurm resource visibility.
+# Adds pre-flight sanity checks for GPUs, and MPI.
 #
 # Default: mpirun -np 30 python launch_remd.py
 # You can override -np via --np or by specifying --gpus for automatic -np=<num_gpus>.
@@ -175,11 +175,6 @@ Re-run with --auto-install-mpi to perform a conda install automatically.
 EOM
     exit 1
   fi
-fi
-
-if command -v scontrol &>/dev/null; then
-  echo "[sanity] Slurm GPU resources (Gres/AllocTRES)" >&2
-  scontrol show nodes | grep -E "Gres=|AllocTRES" | head -n 20 || true
 fi
 
 # Determine usable GPUs
