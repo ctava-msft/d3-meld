@@ -1,0 +1,56 @@
+# AML-ready GPU + OpenMPI + MELD container
+# Base: NVIDIA CUDA runtime w/ OpenMM compatible drivers, then install micromamba env.
+# Multi-stage to minimize final size.
+
+FROM nvidia/cuda:12.2.2-runtime-ubuntu22.04 AS base
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System deps (OpenMPI, build essentials for any wheels, minimal utilities)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openmpi-bin libopenmpi-dev \
+    build-essential git wget curl ca-certificates \
+    libffi-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Micromamba install (smaller than full conda)
+ENV MAMBA_ROOT_PREFIX=/opt/conda
+RUN curl -L https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba && \
+    mkdir -p /opt/conda && \
+    ./bin/micromamba shell init -s bash -p /opt/conda
+ENV PATH=/opt/conda/bin:$PATH
+
+# Copy conda spec
+COPY conda.yaml /tmp/conda.yaml
+
+# Create env (match name in conda.yaml) and install mpi4py AFTER ensuring system OpenMPI present
+RUN micromamba create -y -f /tmp/conda.yaml && \
+    micromamba run -n d3-meld-2-env python -c "import mpi4py; import meld; import openmm" && \
+    micromamba clean -a -y
+
+# Set default env activation
+ENV CONDA_DEFAULT_ENV=d3-meld-2-env
+ENV PATH=/opt/conda/envs/d3-meld-2-env/bin:$PATH
+ENV LD_LIBRARY_PATH=/opt/conda/envs/d3-meld-2-env/lib:$LD_LIBRARY_PATH
+
+# Workdir
+WORKDIR /workspace
+
+# Copy project (only essentials to leverage layer caching)
+COPY config.py setup_meld.py run_mpi_meld.sh run_gpu_meld.sh launch_remd.py ./
+COPY sitecustomize.py usercustomize.py ./
+COPY timestamp_log_lines.py ./
+# Optional data restraint/helper .dat files if present
+COPY 129-345_CA_dist_bias.dat 25-106_CA_dist_bias.dat phi.dat psi.dat af3_tleap_sequence.dat prot_tleap_sequence.dat ./
+
+# For full context (optional):
+COPY . .
+
+# Ensure scripts executable
+RUN chmod +x run_mpi_meld.sh run_gpu_meld.sh
+
+# Runtime defaults
+ENV SKIP_ENV=1
+ENV PYTHONUNBUFFERED=1
+
+# Azure ML will override entrypoint; provide helpful default
+CMD ["bash", "-lc", "./run_mpi_meld.sh --skip-env --gpus 0 --np 1 --resume"]

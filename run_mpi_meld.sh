@@ -34,6 +34,7 @@ AUTO_INSTALL_MPI=0  # if set (--auto-install-mpi) attempt conda install openmpi 
 SUGGEST_THREADS=0   # if set, will print OMP/MKL thread suggestions
 MPI_CMD_BIN=""     # resolved launcher (mpirun or mpiexec)
 ADD_TIMESTAMPS=0    # if set (--add-timestamps) run timestamp post-processing after job
+SKIP_ENV=0          # if set (--skip-env) do not attempt conda create/activate (container baked)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -51,6 +52,7 @@ while [[ $# -gt 0 ]]; do
   --auto-install-mpi) AUTO_INSTALL_MPI=1 ;;
   --suggest-threads) SUGGEST_THREADS=1 ;;
   --add-timestamps) ADD_TIMESTAMPS=1 ;;
+  --skip-env) SKIP_ENV=1 ;;
     *.yml|*.yaml) ENV_FILE="$1" ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
@@ -70,6 +72,10 @@ if [[ -z "$ENV_NAME" ]]; then
 fi
 
 activate_conda() {
+  if [[ $SKIP_ENV -eq 1 ]]; then
+    echo "[env] SKIP_ENV=1 -> skipping conda activation/creation" >&2
+    return 0
+  fi
   if ! command -v conda &>/dev/null; then
     if [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
       # shellcheck disable=SC1091
@@ -225,7 +231,9 @@ fi
 
 # Activate env (after determining to reduce noise on dry-run reporting)
 activate_conda
-trap 'conda deactivate || true' EXIT
+if [[ $SKIP_ENV -eq 0 ]]; then
+  trap 'conda deactivate || true' EXIT
+fi
 
 # Ensure CUDA compiler path (optional)
 if [[ -z "${OPENMM_CUDA_COMPILER:-}" ]] && command -v nvcc &>/dev/null; then
