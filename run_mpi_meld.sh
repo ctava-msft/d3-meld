@@ -36,6 +36,8 @@ MPI_CMD_BIN=""     # resolved launcher (mpirun or mpiexec)
 ADD_TIMESTAMPS=0    # if set (--add-timestamps) run timestamp post-processing after job
 SKIP_ENV=0          # if set (--skip-env) do not attempt conda create/activate (container baked)
 ALLOW_OVERSUB=0     # if set (--allow-oversubscribe) permit NP > #GPUs (forces round-robin binding)
+MULTIPLEX_FACTOR=1  # forwarded to launch_remd.py
+ALLOW_PARTIAL=0     # forwarded to launch_remd.py
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -55,6 +57,9 @@ while [[ $# -gt 0 ]]; do
   --add-timestamps) ADD_TIMESTAMPS=1 ;;
   --skip-env) SKIP_ENV=1 ;;
   --allow-oversubscribe) ALLOW_OVERSUB=1 ;;
+  --multiplex-factor) shift; MULTIPLEX_FACTOR="${1:-1}" || true ;;
+  --multiplex-factor=*) MULTIPLEX_FACTOR="${1#--multiplex-factor=}" ;;
+  --allow-partial) ALLOW_PARTIAL=1 ;;
     *.yml|*.yaml) ENV_FILE="$1" ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
@@ -317,7 +322,10 @@ if [[ -n "$EXTRA_MPI_ARGS" ]]; then
   EXTRA_SPLIT=($EXTRA_MPI_ARGS)
   MPI_CMD+=("${EXTRA_SPLIT[@]}")
 fi
-MPI_CMD+=(bash run_gpu_meld.sh "$PY_EXEC" "$LAUNCH_SCRIPT")
+MPI_CMD+=(bash run_gpu_meld.sh "$PY_EXEC" "$LAUNCH_SCRIPT" --multiplex-factor "$MULTIPLEX_FACTOR")
+if [[ $ALLOW_PARTIAL -eq 1 ]]; then
+  MPI_CMD+=(--allow-partial)
+fi
 
 echo "[cmd] ${MPI_CMD[*]}" >&2
 if [[ $DRY_RUN -eq 1 ]]; then
