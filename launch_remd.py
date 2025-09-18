@@ -113,6 +113,10 @@ def main(argv=None) -> int:
                 "some ranks may be idle or some replicas unassigned.",
                 file=sys.stderr,
             )
+    # If we have more ranks than needed for multiplexing, politely exit extra ranks
+    if size > expected_ranks and rank >= expected_ranks:
+        print(f"[launch][rank {rank}] Exiting early: not needed (expected_ranks={expected_ranks}).")
+        return 0
 
     # Decide launcher priority: prefer multiplex if factor>1 and available
     from shutil import which
