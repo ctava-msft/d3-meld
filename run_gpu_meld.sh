@@ -28,4 +28,15 @@ fi
 # Provide a hint variable (not required by MELD, but useful for debugging/logging)
 export MELD_LOCAL_RANK=$LOCAL_RANK
 
+# Basic scratch-block mitigation: let rank0 race ahead to create first block, others wait
+if [[ "${SCRATCH_BLOCKS:-0}" == "1" && "$LOCAL_RANK" != "0" ]]; then
+	echo "[rank $LOCAL_RANK] Waiting for Data/Blocks/block_000000.nc to appear (SCRATCH_BLOCKS=1)" >&2
+	for i in {1..120}; do
+		if [[ -f Data/Blocks/block_000000.nc ]]; then
+			break
+		fi
+		sleep 1
+	done
+fi
+
 exec "$@"

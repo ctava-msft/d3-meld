@@ -129,6 +129,11 @@ grep 'Running replica exchange step' Runs/run/multigpu_*/remd.log | head
 
   ```nohup bash -lc "./run_mpi_meld.sh --gpus 0,1 --np 2" > remd_mpigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
+  ```nohup bash -lc './run_mpi_meld.sh --gpus 0,1 --np 2 --multiplex-factor 15' \
+  > remd_mpi_mux30r2g_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
+
+```nohup bash -lc './run_mpi_meld.sh --gpus 0,1 --np 2 --scratch-blocks --multiplex-factor 16 --allow-partial' \
+  > remd_mpi_mux_partial_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
 ## Extracting trajectory
  conda activate d3-meld-2-env

@@ -38,6 +38,7 @@ SKIP_ENV=0          # if set (--skip-env) do not attempt conda create/activate (
 ALLOW_OVERSUB=0     # if set (--allow-oversubscribe) permit NP > #GPUs (forces round-robin binding)
 MULTIPLEX_FACTOR=1  # forwarded to launch_remd.py
 ALLOW_PARTIAL=0     # forwarded to launch_remd.py
+SCRATCH_BLOCKS=0    # if set (--scratch-blocks) rank0 owns block creation; others wait
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -60,6 +61,7 @@ while [[ $# -gt 0 ]]; do
   --multiplex-factor) shift; MULTIPLEX_FACTOR="${1:-1}" || true ;;
   --multiplex-factor=*) MULTIPLEX_FACTOR="${1#--multiplex-factor=}" ;;
   --allow-partial) ALLOW_PARTIAL=1 ;;
+  --scratch-blocks) SCRATCH_BLOCKS=1 ;;
     *.yml|*.yaml) ENV_FILE="$1" ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
@@ -309,6 +311,7 @@ fi
 # We rely on run_gpu_meld.sh (per-rank wrapper) to set CUDA_VISIBLE_DEVICES = local rank.
 # Provide a consolidated CUDA_VISIBLE_DEVICES list so each rank sees all and then wrapper selects its own.
 export CUDA_VISIBLE_DEVICES="$GPU_LIST"
+export SCRATCH_BLOCKS="$SCRATCH_BLOCKS"
 
 PY_EXEC="python"
 LAUNCH_SCRIPT="launch_remd.py"
