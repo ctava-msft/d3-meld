@@ -35,6 +35,7 @@ SUGGEST_THREADS=0   # if set, will print OMP/MKL thread suggestions
 MPI_CMD_BIN=""     # resolved launcher (mpirun or mpiexec)
 ADD_TIMESTAMPS=0    # if set (--add-timestamps) run timestamp post-processing after job
 SKIP_ENV=0          # if set (--skip-env) do not attempt conda create/activate (container baked)
+ALLOW_OVERSUB=0     # if set (--allow-oversubscribe) permit NP > #GPUs (forces round-robin binding)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,6 +54,7 @@ while [[ $# -gt 0 ]]; do
   --suggest-threads) SUGGEST_THREADS=1 ;;
   --add-timestamps) ADD_TIMESTAMPS=1 ;;
   --skip-env) SKIP_ENV=1 ;;
+  --allow-oversubscribe) ALLOW_OVERSUB=1 ;;
     *.yml|*.yaml) ENV_FILE="$1" ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
@@ -211,6 +213,47 @@ else
   fi
 fi
 echo "[info] MPI ranks (np) = $NP" >&2
+
+# Validate ranks vs GPUs
+if [[ $NP -gt $N_GPU ]] && [[ $ALLOW_OVERSUB -eq 0 ]]; then
+  cat >&2 <<EOM
+[error] Requested MPI ranks (np=$NP) exceeds number of visible GPUs (n_gpu=$N_GPU).
+This configuration often triggers MELD error: "More mpi process than GPUs".
+
+Remedies:
+  1) Reduce ranks:   re-run with --np $N_GPU
+  2) Select GPUs:    --gpus 0,1,... (ensure count >= np)
+  3) Allow sharing:  add --allow-oversubscribe (each GPU reused round-robin) [performance warning]
+  4) Debug devices:  run with --debug to print CUDA query
+
+Aborting (no oversubscription allowed). Use --allow-oversubscribe to override.
+EOM
+  exit 3
+fi
+
+if [[ $DEBUG -eq 1 ]]; then
+  echo "[debug] GPU_LIST=$GPU_LIST" >&2
+  echo "[debug] NP=$NP ALLOW_OVERSUB=$ALLOW_OVERSUB" >&2
+  if command -v python &>/dev/null; then
+    python - <<'PY'
+import os, sys
+try:
+    import torch
+    print(f"[debug] torch.cuda.device_count()={torch.cuda.device_count()}")
+    for i in range(torch.cuda.device_count()):
+        print(f"[debug] torch.cuda.get_device_name({i})={torch.cuda.get_device_name(i)}")
+except Exception as e:
+    print(f"[debug] torch cuda probe failed: {e}")
+try:
+    import openmm
+    from openmm import Platform
+    p = Platform.getPlatformByName('CUDA')
+    print('[debug] OpenMM CUDA platform detected')
+except Exception as e:
+    print(f"[debug] OpenMM probe failed: {e}")
+PY
+  fi
+fi
 
 if [[ $SUGGEST_THREADS -eq 1 ]]; then
   if [[ -n "${N_GPU:-}" ]] && [[ $NP -gt 0 ]]; then

@@ -1,22 +1,81 @@
 ## Azure ML Multi-Node MELD (MPI + GPUs)
 
-This guide shows how to build a GPU/OpenMPI container for MELD, register it as an Azure ML environment, and launch a multi-node Replica Exchange MD job across multiple A100 or H100 GPU nodes.
+This guide shows how to build a GPU/OpenMPI container for MELD using Podman (rootless by default), register it as an Azure ML environment, and launch a multi-node Replica Exchange MD job across multiple A100 or H100 GPU nodes.
 
-### 1. Build & Push Image
+If you previously used `docker`, the only change for Azure ML is how you build & push the image. The image reference (`<acr>.azurecr.io/repo:tag`) is identical.
+
+### 1. Build & Push Image (Podman)
 
 Prerequisites:
 - Azure Container Registry (ACR) (e.g. `myacr`)
-- Azure CLI logged in (`az login`) and `az acr login --name myacr`
+- Azure CLI logged in (`az login`)
+- Podman installed (Windows: Podman Machine; Linux: native)
 
-Build (from repo root):
+#### 1.1 Initialize Podman (Windows / macOS with Podman machine)
+```powershell
+podman machine init
+podman machine start
+podman system connection list  # verify running
+```
+
+(Optional) Add Podman to PATH for current session (Windows PowerShell):
+```powershell
+$env:PATH += ";C:\Program Files\RedHat\Podman"
+```
+
+#### 1.2 Variables
+PowerShell:
+```powershell
+$ACR = "d3acr1"          # your ACR name (no domain)
+$IMAGE = "d3-meld-mpi"
+$TAG = "latest"
+```
+Bash:
 ```bash
-ACR=myacr
+ACR=d3acr1
 IMAGE=d3-meld-mpi
 TAG=latest
-az acr login --name $ACR
-docker build -f Dockerfile.mpi -t $ACR.azurecr.io/$IMAGE:$TAG .
-docker push $ACR.azurecr.io/$IMAGE:$TAG
 ```
+
+#### 1.3 ACR Login (Preferred)
+`az acr login` writes credentials into the Docker-compatible config that Podman also reads (Linux & Podman machine). Run:
+```powershell
+az acr login --name $ACR
+```
+If this fails to authenticate Podman (rare on some Windows setups), use a token:
+```powershell
+$token = az acr login --name $ACR --expose-token --query accessToken -o tsv
+podman login "$ACR.azurecr.io" -u 00000000-0000-0000-0000-000000000000 -p $token
+```
+Linux bash equivalent:
+```bash
+TOKEN=$(az acr login --name $ACR --expose-token --query accessToken -o tsv)
+podman login "$ACR.azurecr.io" -u 00000000-0000-0000-0000-000000000000 -p $TOKEN
+```
+
+#### 1.4 Build Image
+From repo root (where `Dockerfile.mpi` lives):
+```powershell
+podman build -f Dockerfile.mpi -t "$ACR.azurecr.io/$IMAGE:$TAG" .
+```
+> Note: Podman uses Buildah; flags are the same as Docker for this case.
+
+#### 1.5 Push Image
+```powershell
+podman push "$ACR.azurecr.io/$IMAGE:$TAG"
+```
+
+Verify in ACR (optional):
+```powershell
+az acr repository show --name $ACR --image $IMAGE:$TAG
+```
+
+#### 1.6 (Optional) Multi-Arch / Rebuild
+For reproducibility you can add a content digest reference later in AML jobs with:
+```powershell
+podman inspect "$ACR.azurecr.io/$IMAGE:$TAG" --format '{{.Digest}}'
+```
+Then use `image: $ACR.azurecr.io/$IMAGE@<digest>` in job YAML.
 
 ### 2. Register Environment
 
@@ -112,11 +171,19 @@ command: >-
 
 Container already contains the conda env; hence `--skip-env` avoids redundant creation. It uses system OpenMPI (apt) plus `mpi4py` inside the micromamba env, ensuring CUDA-aware paths. Ensure the AML cluster image SKU supports the CUDA version (22.04 + driver runtime). If driver mismatch arises, consider switching base to an AML curated CUDA image and layering micromamba only.
 
+Podman build parity:
+- Rootless build is fine for pushing to ACR.
+- No special flags needed because image runtime on AML does not depend on how it was built (rootless vs rootful).
+- If you need NVIDIA runtime locally for testing, ensure nvidia-container-toolkit integration with Podman; on many systems: `sudo apt install -y nvidia-container-toolkit` then configure `/etc/containers/containers.conf` hooks. For pure build & push this is not required.
+
 ### 10. Common Issues
 
 - Mismatch replicas vs ranks (scatter error): Regenerate Data with matching `n_replicas`.
 - Slow exchanges: Ensure one rank per GPU; avoid oversubscription.
 - OpenMM CUDA errors: Check driver compatibility and `nvidia-smi` inside job (`az ml job ssh` for debugging if enabled).
+- Podman cannot push / 401: Re-run token login (`--expose-token`) or remove stale creds at `~/.docker/config.json`.
+- Windows Podman path issues: Ensure session PATH includes Podman binaries or open a fresh terminal after install.
+- Image not visible in ACR portal: Confirm push succeeded and you used the correct registry name (no typos); list with `az acr repository list -n $ACR`.
 
 ---
 For bespoke ladder generation or multiplex runs, adapt the `command` to invoke alternative scripts (e.g. `multi_gpu_multiplex.py`).

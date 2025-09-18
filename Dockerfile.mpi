@@ -53,4 +53,4 @@ ENV SKIP_ENV=1
 ENV PYTHONUNBUFFERED=1
 
 # Azure ML will override entrypoint; provide helpful default
-CMD ["bash", "-lc", "./run_mpi_meld.sh --skip-env --gpus 0 --np 1 --resume"]
+CMD ["bash", "-lc", "./run_mpi_meld.sh --skip-env --gpus 0,1,2,3 --np 4 --resume"]
