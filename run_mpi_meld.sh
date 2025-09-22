@@ -91,6 +91,12 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# If user requested communicator debugging, export now (must precede any Python importing meld)
+if [[ -n "$MELD_DEBUG_COMM_FLAG" ]]; then
+  export MELD_DEBUG_COMM="$MELD_DEBUG_COMM_FLAG"
+  echo "[early-debug] Exported MELD_DEBUG_COMM=$MELD_DEBUG_COMM before patch/import" >&2
+fi
+
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "ERROR: Env file $ENV_FILE not found" >&2; exit 1
 fi
@@ -131,6 +137,11 @@ activate_conda() {
       echo "[patch] Attempting to monkey patch meld.comm with local ./comm.py" >&2
         COMM_SRC_ABS="$(pwd)/comm.py"
         export D3_MELD_COMM_SRC="$COMM_SRC_ABS"
+        # Re-export MELD_DEBUG_COMM inside env scope just in case
+        if [[ -n "$MELD_DEBUG_COMM_FLAG" ]] && [[ -z "${MELD_DEBUG_COMM:-}" ]]; then
+          export MELD_DEBUG_COMM="$MELD_DEBUG_COMM_FLAG"
+          echo "[patch-debug] Re-exported MELD_DEBUG_COMM inside env activation" >&2
+        fi
     python - <<'PY' || echo "[patch] Python patch routine failed (non-fatal)" >&2
   import sys, shutil, pathlib, importlib, traceback, hashlib, os
   src_env = os.environ.get("D3_MELD_COMM_SRC")
@@ -175,6 +186,17 @@ else:
     print('[patch] ERROR: marker _summarize_structure missing after patch; aborting (--require-comm-patch).', file=sys.stderr)
     sys.exit(98)
 PY
+      # Optional verification import to force module reload under debug
+      if [[ -n "$MELD_DEBUG_COMM_FLAG" ]]; then
+        python - <<'PY'
+import os, importlib, sys
+try:
+    import meld.comm as mc
+    print(f"[verify-debug] meld.comm path={mc.__file__} debug_env={os.environ.get('MELD_DEBUG_COMM')}", file=sys.stderr)
+except Exception as e:
+    print(f"[verify-debug] Failed to import meld.comm after patch: {e}", file=sys.stderr)
+PY
+      fi
     else
       echo "[patch] comm.py not found in current directory; skipping monkey patch" >&2
     fi

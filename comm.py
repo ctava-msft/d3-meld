@@ -25,10 +25,12 @@ from . import interfaces, util
 
 logger = logging.getLogger(__name__)
 
-# Import-time banner to verify patched communicator is active
+# Import-time banner to verify patched communicator is active (best-effort rank detection)
 try:  # pragma: no cover (diagnostic only)
     if os.environ.get("MELD_DEBUG_COMM"):
-        sys.stderr.write(f"[comm-debug] patched comm module loaded: {__file__}\n")
+        _rank = os.environ.get("OMPI_COMM_WORLD_RANK") or os.environ.get("PMI_RANK") or os.environ.get("MV2_COMM_WORLD_RANK") or "?"
+        _size = os.environ.get("OMPI_COMM_WORLD_SIZE") or os.environ.get("PMI_SIZE") or os.environ.get("MV2_COMM_WORLD_SIZE") or "?"
+        sys.stderr.write(f"[comm-debug] patched comm module loaded: {__file__} rank={_rank}/{_size}\n")
         sys.stderr.flush()
 except Exception:
     pass
@@ -101,6 +103,18 @@ class MPICommunicator(interfaces.ICommunicator):
         self._timeout_message = f"Call to {{:s}} did not complete in {timeout} seconds"
         # Enable verbose communication diagnostics when env var set
         self._debug_comm = os.environ.get("MELD_DEBUG_COMM", "0").lower() in ("1", "true", "yes", "on")
+        # Always-on lightweight debug printing hook (prints even if logging is buffered)
+        self._always_print_debug = True
+
+    # --- New simple print helper (unconditional, flushes immediately) ---
+    def _print_debug(self, tag: str, payload: str):  # pragma: no cover (diagnostic only)
+        try:
+            rank = getattr(self, "_my_rank", "?")
+            size = getattr(self, "_n_replicas", "?")
+            sys.stderr.write(f"[comm-debug r{rank}/{size} {tag}] {payload}\n")
+            sys.stderr.flush()
+        except Exception:
+            pass
 
     # ---- Internal debug helpers ----
     def _summarize_structure(self, label: str, obj):  # pragma: no cover (diagnostic only)
@@ -225,6 +239,12 @@ class MPICommunicator(interfaces.ICommunicator):
         """
         # Divide the states into blocks
         state_blocks = self._to_blocks(all_states)
+        # Added debug prints to inspect raw incoming states structure
+        try:
+            sample_types = [type(x).__name__ for x in all_states[:4]]  # type: ignore
+            self._print_debug("distribute_states.pre", f"n_total={len(all_states)} sample_types={sample_types}")  # type: ignore[arg-type]
+        except Exception:
+            self._print_debug("distribute_states.pre", "failed to sample types")
         self._summarize_structure("state_blocks(raw)", state_blocks)
         # Defensive normalization: ensure each block is a flat list of states
         norm_blocks: List[List[interfaces.IState]] = []
@@ -254,9 +274,23 @@ class MPICommunicator(interfaces.ICommunicator):
             self._timeout,
             RuntimeError(self._timeout_message.format("broadcast_states_to_workers")),
         ):
+            self._print_debug("distribute_states.scatter", f"about_to_scatter n_blocks={len(state_blocks)} block_lengths={[len(b) for b in state_blocks]}")
             result = self._mpi_comm.scatter(state_blocks, root=0)
+            # Aggressive post-scatter normalization (leader side only): flatten one level
+            if isinstance(result, list) and any(isinstance(x, list) for x in result):
+                flat = []
+                for x in result:
+                    if isinstance(x, list):
+                        flat.extend(x)
+                    else:
+                        flat.append(x)
+                result = flat  # type: ignore
+            try:
+                self._print_debug("distribute_states.post", f"received_block_len={len(result)} elem_types={[type(x).__name__ for x in result[:4]]}")  # type: ignore
+            except Exception:
+                self._print_debug("distribute_states.post", "failed to inspect result")
             self._summarize_structure("leader_state_block(sent-to-leader-returned)", result)
-            return result
+            return result  # type: ignore[return-value]
 
     @util.log_timing(logger)
     def receive_states_from_leader(self) -> List[interfaces.IState]:
@@ -270,9 +304,23 @@ class MPICommunicator(interfaces.ICommunicator):
             self._timeout,
             RuntimeError(self._timeout_message.format("receive_state_from_leader")),
         ):
+            self._print_debug("receive_states.scatter", "waiting_for_block")
             result = self._mpi_comm.scatter(None, root=0)
+            # Worker side normalization identical to leader
+            if isinstance(result, list) and any(isinstance(x, list) for x in result):
+                flat = []
+                for x in result:
+                    if isinstance(x, list):
+                        flat.extend(x)
+                    else:
+                        flat.append(x)
+                result = flat  # type: ignore
+            try:
+                self._print_debug("receive_states.post", f"received_block_len={len(result)} elem_types={[type(x).__name__ for x in result[:4]]}")  # type: ignore
+            except Exception:
+                self._print_debug("receive_states.post", "failed to inspect result")
             self._summarize_structure("worker_state_block(received)", result)
-            return result
+            return result  # type: ignore[return-value]
 
     @util.log_timing(logger)
     def gather_states_from_workers(
@@ -291,9 +339,17 @@ class MPICommunicator(interfaces.ICommunicator):
             RuntimeError(self._timeout_message.format("gather_states_from_workers")),
         ):
             self._summarize_structure("gather_states_from_workers.input_block", state_on_leader)
+            try:
+                self._print_debug("gather_states.pre", f"sending_block_len={len(state_on_leader)} elem_types={[type(x).__name__ for x in state_on_leader[:4]]}")
+            except Exception:
+                self._print_debug("gather_states.pre", "failed to inspect sending block")
             blocks = self._mpi_comm.gather(state_on_leader, root=0)
 
         self._summarize_structure("gather_states_from_workers.collected_blocks", blocks)
+        try:
+            self._print_debug("gather_states.collected", f"n_blocks={len(blocks)} lens={[len(b) if isinstance(b,list) else 'na' for b in blocks][:8]}")
+        except Exception:
+            self._print_debug("gather_states.collected", "failed to inspect blocks")
         flat = self._from_blocks(blocks)
         self._summarize_structure("gather_states_from_workers.flat_initial", flat)
         # Guard against accidental nested singleton lists (e.g., [[State], [State]])
@@ -309,6 +365,10 @@ class MPICommunicator(interfaces.ICommunicator):
             else:
                 normalized.append(s)
         self._summarize_structure("gather_states_from_workers.normalized", normalized)
+        try:
+            self._print_debug("gather_states.final", f"normalized_len={len(normalized)} elem_types={[type(x).__name__ for x in normalized[:4]]}")
+        except Exception:
+            self._print_debug("gather_states.final", "failed to inspect normalized")
         return normalized
 
     @util.log_timing(logger)
@@ -327,7 +387,12 @@ class MPICommunicator(interfaces.ICommunicator):
             RuntimeError(self._timeout_message.format("send_states_to_leader")),
         ):
             self._summarize_structure("send_states_to_leader.block", block)
+            try:
+                self._print_debug("send_states.pre", f"block_len={len(block)} elem_types={[type(x).__name__ for x in block[:4]]}")  # type: ignore
+            except Exception:
+                self._print_debug("send_states.pre", "failed to inspect block")
             self._mpi_comm.gather(block, root=0)
+            self._print_debug("send_states.post", "gather_complete")
 
     @util.log_timing(logger)
     def broadcast_all_states_to_workers(
