@@ -42,6 +42,7 @@ RANKS_PER_GPU=1     # new: how many MPI ranks share a single physical GPU
 MULTIPLEX_FACTOR=1  # forwarded to launch_remd.py
 ALLOW_PARTIAL=0     # forwarded to launch_remd.py
 SCRATCH_BLOCKS=0    # if set (--scratch-blocks) rank0 owns block creation; others wait
+DO_COMM_PATCH=1     # monkey patch meld.comm with local comm.py (disable with --no-comm-patch)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -67,6 +68,7 @@ while [[ $# -gt 0 ]]; do
   --multiplex-factor=*) MULTIPLEX_FACTOR="${1#--multiplex-factor=}" ;;
   --allow-partial) ALLOW_PARTIAL=1 ;;
   --scratch-blocks) SCRATCH_BLOCKS=1 ;;
+    --no-comm-patch) DO_COMM_PATCH=0 ;;
     *.yml|*.yaml) ENV_FILE="$1" ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
@@ -109,130 +111,43 @@ activate_conda() {
   fi
   conda activate "$ENV_NAME"
 
-  # OpenMM upgrade handling (avoid pip replacing conda package causing uninstall-distutils-installed-package)
-  # Set USE_PIP_OPENMM=1 to allow pip to manage openmm instead.
-  if [[ "${USE_PIP_OPENMM:-0}" != "1" ]]; then
-    python - <<'PY'
-import sys
+  # Monkey patch meld.comm if requested
+  if [[ $DO_COMM_PATCH -eq 1 ]]; then
+    if [[ -f "comm.py" ]]; then
+      echo "[patch] Attempting to monkey patch meld.comm with local ./comm.py" >&2
+      python - <<'PY' || echo "[patch] Python patch routine failed (non-fatal)" >&2
+import sys, shutil, pathlib, importlib, traceback
+src = pathlib.Path("comm.py")
+if not src.exists():
+    sys.exit(0)
 try:
-    import openmm
-    ver = getattr(openmm,'__version__','0')
-    major = int(ver.split('.')[0]) if ver.split('.')[0].isdigit() else 0
-    if major >= 8:
-        sys.exit(0)  # OK
-    else:
-        sys.exit(2)  # too old
-except ModuleNotFoundError:
-    sys.exit(1)      # missing
-except Exception:
-    sys.exit(3)      # unknown issue
-PY
-    rc=$?
-    if [[ $rc -ne 0 ]]; then
-      echo "[openmm] Missing or version <8 detected (rc=$rc). Attempting conda upgrade to openmm>=8.0." >&2
-      conda install -y -c conda-forge "openmm>=8.0" || {
-        echo "[openmm] Conda upgrade failed. You may try: conda remove openmm && conda install -c conda-forge 'openmm>=8.0'" >&2
-      }
-      # Re-validate
-      if ! python - <<'PY'; then
-import sys
-try:
-    import openmm
-    ver = getattr(openmm,'__version__','0')
-    major = int(ver.split('.')[0]) if ver.split('.')[0].isdigit() else 0
-    if major < 8:
-        print(f"[error] After attempted upgrade still have OpenMM {ver}.", file=sys.stderr)
-        sys.exit(2)
-    print(f"[openmm] Using OpenMM {ver} (conda).")
-except ModuleNotFoundError:
-    print("[error] OpenMM still not importable after conda install.", file=sys.stderr)
-    sys.exit(1)
-PY
-      echo "[fatal] OpenMM upgrade/validation failed. Aborting." >&2
-      return 14
-      fi
-      OPENMM_CONDA_UPGRADED=1
-    else
-      OPENMM_CONDA_UPGRADED=0
-    fi
-  else
-    echo "[openmm] USE_PIP_OPENMM=1 -> will allow pip to manage openmm" >&2
-  fi
-
-  # NEW: Install supplemental pip requirements (mirrors conda.yaml) before local MELD editable install.
-  if [[ -f requirements.txt ]]; then
-    echo "[setup] Installing pip requirements from requirements.txt" >&2
-    REQ_FILE="requirements.txt"
-    if [[ "${USE_PIP_OPENMM:-0}" != "1" && "${OPENMM_CONDA_UPGRADED:-0}" == "1" ]]; then
-      # Strip openmm line to prevent pip downgrading or uninstall attempts
-      REQ_TMP=$(mktemp)
-      grep -viE '^[[:space:]]*openmm([>=< ]|$)' "$REQ_FILE" > "$REQ_TMP"
-      REQ_FILE="$REQ_TMP"
-      echo "[openmm] Filtered openmm from requirements (managed by conda)" >&2
-    fi
-    pip install -r "$REQ_FILE"
-    [[ -n "${REQ_TMP:-}" && -f "$REQ_TMP" ]] && rm -f "$REQ_TMP"
-    # Validate OpenMM (must be >=8.0 for top-level 'openmm' imports)
-    if ! python - <<'PY'; then
-import sys
-try:
-    import openmm
-    from openmm import unit  # noqa
-    ver = getattr(openmm,'__version__','unknown')
-    major = int(ver.split('.')[0]) if ver.split('.')[0].isdigit() else 0
-    if major < 8:
-        print(f"[error] OpenMM version {ver} < 8.0; requires openmm>=8.0 for MELD imports.", file=sys.stderr)
-        sys.exit(2)
-    print(f"[setup] Detected OpenMM {ver} (OK)")
-except ModuleNotFoundError:
-    print("[error] OpenMM not importable. Install with: conda install -c conda-forge 'openmm>=8.0'", file=sys.stderr)
-    sys.exit(1)
+    import meld
 except Exception as e:
-    print(f"[error] OpenMM validation failed: {e}", file=sys.stderr)
-    sys.exit(3)
+    print(f"[patch] meld import failed: {e}; skipping", file=sys.stderr)
+    sys.exit(0)
+target = pathlib.Path(meld.__file__).parent / "comm.py"
+if not target.exists():
+    print(f"[patch] Installed meld.comm.py not found at {target}; skipping", file=sys.stderr)
+    sys.exit(0)
+backup = target.with_suffix(".py.orig")
+try:
+    if not backup.exists():
+        shutil.copy2(target, backup)
+        print(f"[patch] Backed up original to {backup}", file=sys.stderr)
+    shutil.copy2(src, target)
+    print(f"[patch] Replaced {target} with local comm.py", file=sys.stderr)
+    # Invalidate import caches; ensure future imports use patched file
+    import importlib
+    importlib.invalidate_caches()
+except Exception as e:
+    print(f"[patch] Failed to replace meld.comm: {e}", file=sys.stderr)
+    traceback.print_exc()
 PY
-    echo "[fatal] OpenMM validation failed; aborting. See messages above." >&2
-    return 12
+    else
+      echo "[patch] comm.py not found in current directory; skipping monkey patch" >&2
     fi
   else
-    echo "[setup] requirements.txt not found; skipping pip bulk install" >&2
-  fi
-
-  # Prefer local Git repo version of MELD (sibling directory ../meld) over conda package
-  # Set USE_LOCAL_MELD=0 to disable. Performs editable install if not already active.
-  if [[ "${USE_LOCAL_MELD:-1}" == "1" ]]; then
-    local script_dir root_dir local_repo
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    root_dir="$(cd "$script_dir/.." && pwd)"
-    local_repo="$root_dir/meld"
-    if [[ ! -d "$local_repo" ]] && [[ -n "${MELD_GIT_REPO:-}" ]]; then
-      echo "[meld] Local repo missing; attempting shallow clone from $MELD_GIT_REPO" >&2
-      (cd "$root_dir" && git clone --depth 1 "$MELD_GIT_REPO" meld) || echo "[meld] WARNING: clone failed" >&2
-    fi
-    if [[ -d "$local_repo/meld" && -f "$local_repo/setup.py" ]]; then
-      # Detect if current python already resolves meld from local_repo
-      if python - <<'PY' 2>/dev/null | grep -q '__LOCAL_MELD_OK__'; then
-__import__('sys')
-try:
-    import meld, pathlib
-    p = pathlib.Path(meld.__file__).resolve()
-    # print sentinel if path is inside repo sibling meld dir
-    import os
-    repo_marker = os.path.join('meld','__init__.py')
-    # heuristic: parent parent should contain setup.py
-    if any((p.parents[i]/'setup.py').exists() for i in range(4)):
-        print('__LOCAL_MELD_OK__')
-except Exception:
-    pass
-PY
-      echo "[meld] Using existing local MELD source (editable)" >&2
-      else
-        echo "[meld] Installing local MELD in editable mode from $local_repo" >&2
-        pip install -e "$local_repo" --no-deps >/dev/null 2>&1 || pip install -e "$local_repo" --no-deps || echo "[meld] WARNING: Editable install failed; may still use conda version" >&2
-      fi
-    else
-      echo "[meld] Local repo not found at $root_dir/meld (set USE_LOCAL_MELD=0 to silence)" >&2
-    fi
+    echo "[patch] DO_COMM_PATCH=0 -> Skipping meld.comm monkey patch" >&2
   fi
 } # Close activate_conda (was missing)
 
