@@ -565,47 +565,37 @@ class MPICommunicator(interfaces.ICommunicator):
         blocks = list(blocks)
         return [item for sublist in blocks for item in sublist]
 
-    # ---- Backward compatibility shims (always return lists) ----
-    def _ensure_list(self, obj):
-        if isinstance(obj, (list, tuple)):
-            return list(obj)
-        return [obj]
+    # ---- Backward compatibility shims (revised again: always flat lists of primitives / states) ----
+    def _normalize_state_block(self, block):
+        # If block is a list whose elements are lists (one extra nesting), flatten one level.
+        if isinstance(block, list) and block and all(isinstance(x, list) for x in block):
+            flat = []
+            for sub in block:
+                flat.extend(sub)
+            return flat
+        return block
 
-    def _flatten_one(self, seq):
-        # If seq is a list whose elements are lists of non‑lists (nested one level), flatten.
-        if not isinstance(seq, list):
-            return seq
-        if seq and all(isinstance(x, list) for x in seq):
-            # Only flatten one level if inner elements are not lists themselves
-            if seq[0] and not isinstance(seq[0][0], list):
-                flat = []
-                for sub in seq:
-                    flat.extend(sub)
-                return flat
-        return seq
-
-    # Alpha distribution
+    # Alpha distribution (always return list[float])
     def broadcast_alphas_to_workers(self, all_alphas):
-        block = self.distribute_alphas_to_workers(all_alphas)
-        return self._ensure_list(block)
+        return self.distribute_alphas_to_workers(all_alphas)
 
     def receive_alpha_from_leader(self):
-        block = self.receive_alphas_from_leader()
-        return self._ensure_list(block)
+        return self.receive_alphas_from_leader()
 
-    # State distribution for MD steps
+    # State distribution (always return flat list[SystemState])
     def broadcast_states_to_workers(self, all_states):
         block = self.distribute_states_to_workers(all_states)
-        block = self._flatten_one(block)
-        return self._ensure_list(block)  # keep as list (possibly multi-state)
+        return self._normalize_state_block(block)
 
     def receive_state_from_leader(self):
         block = self.receive_states_from_leader()
-        block = self._flatten_one(block)
-        return self._ensure_list(block)
+        return self._normalize_state_block(block)
 
     def send_state_to_leader(self, state):
-        return self.send_states_to_leader(self._ensure_list(state))
+        # Accept single state or list; underlying method expects list
+        if not isinstance(state, list):
+            state = [state]
+        return self.send_states_to_leader(state)
 
     # Full state broadcast for energy calculation
     def broadcast_states_for_energy_calc_to_workers(self, states):
