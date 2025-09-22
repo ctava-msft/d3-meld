@@ -132,9 +132,8 @@ except Exception as e:
     print(f"[error] OpenMM validation failed: {e}", file=sys.stderr)
     sys.exit(3)
 PY
-    then
-      echo "[fatal] OpenMM validation failed; aborting. See messages above." >&2
-      return 12
+    echo "[fatal] OpenMM validation failed; aborting. See messages above." >&2
+    return 12
     fi
   else
     echo "[setup] requirements.txt not found; skipping pip bulk install" >&2
