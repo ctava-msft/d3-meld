@@ -43,6 +43,8 @@ MULTIPLEX_FACTOR=1  # forwarded to launch_remd.py
 ALLOW_PARTIAL=0     # forwarded to launch_remd.py
 SCRATCH_BLOCKS=0    # if set (--scratch-blocks) rank0 owns block creation; others wait
 DO_COMM_PATCH=1     # monkey patch meld.comm with local comm.py (disable with --no-comm-patch)
+ACCEPT_CONDA_TOS=1          # new: accept Anaconda TOS (main, r) before auto-install
+MPI_INSTALL_FORGE_ONLY=0    # new: restrict installs to conda-forge only (avoids needing Anaconda TOS)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -72,6 +74,8 @@ while [[ $# -gt 0 ]]; do
     *.yml|*.yaml) ENV_FILE="$1" ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
+    --accept-conda-tos) ACCEPT_CONDA_TOS=1 ;;
+    --mpi-install-forge-only) MPI_INSTALL_FORGE_ONLY=1 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
   shift
@@ -201,25 +205,88 @@ if detect_mpi; then
   "$MPI_CMD_BIN" --version 2>&1 | head -n 1 || true
 else
   if [[ $AUTO_INSTALL_MPI -eq 1 ]]; then
-    echo "[sanity] No mpirun/mpiexec found – attempting conda install (openmpi, mpi4py)" >&2
+    echo "[sanity] No mpirun/mpiexec found – attempting conda MPI install" >&2
     if ! command -v conda &>/dev/null; then
       echo "ERROR: --auto-install-mpi requested but conda not on PATH" >&2; exit 1
     fi
     # shellcheck disable=SC1091
     source "$(conda info --base)/etc/profile.d/conda.sh"
+
+    if [[ $ACCEPT_CONDA_TOS -eq 1 ]]; then
+      echo "[mpi] Accepting Anaconda channel Terms of Service (main, r)" >&2
+      conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
+      conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true
+    fi
+
+    print_tos_help() {
+      cat >&2 <<'EOT'
+[mpi][help] CondaToSNonInteractiveError detected (channel Terms not accepted).
+Options:
+  A) Accept TOS now and re-run:
+       conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+       conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+     Re-run:  ./run_mpi_meld.sh --auto-install-mpi ...
+  B) Use only conda-forge (no Anaconda channels):
+       ./run_mpi_meld.sh --auto-install-mpi --mpi-install-forge-only ...
+  C) Pre-install manually:
+       conda install -y -c conda-forge openmpi mpi4py
+       (or mpich mpi4py)
+  D) Accept automatically next time with:
+       --auto-install-mpi --accept-conda-tos
+Exit code 45 returned to signal unmet TOS.
+EOT
+    }
+
+    # Choose install command
+    INSTALL_CHANNEL_ARGS="-c conda-forge"
+    OVERRIDE_FLAG=""
+    if [[ $MPI_INSTALL_FORGE_ONLY -eq 1 ]]; then
+      OVERRIDE_FLAG="--override-channels"
+      echo "[mpi] Using conda-forge only (--mpi-install-forge-only)" >&2
+    fi
+
     OPENMPI_INSTALL_FAILED=0
-    conda install -y -c conda-forge openmpi mpi4py || OPENMPI_INSTALL_FAILED=1
+    TOS_ERROR=0
+    echo "[mpi] Installing OpenMPI + mpi4py" >&2
+    set +e
+    conda install -y $OVERRIDE_FLAG $INSTALL_CHANNEL_ARGS openmpi mpi4py 2> >(tee .mpi_install_err.log >&2)
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 ]]; then
+      if grep -q 'CondaToSNonInteractiveError' .mpi_install_err.log; then
+        TOS_ERROR=1
+      else
+        OPENMPI_INSTALL_FAILED=1
+      fi
+    fi
+    rm -f .mpi_install_err.log || true
+
+    if [[ $TOS_ERROR -eq 1 ]]; then
+      print_tos_help
+      exit 45
+    fi
+
     hash -r
     if ! detect_mpi; then
       if [[ $OPENMPI_INSTALL_FAILED -eq 1 ]]; then
-        echo "[warn] openmpi install failed – attempting MPICH+mpi4py" >&2
+        echo "[warn] OpenMPI install failed – attempting MPICH fallback" >&2
       else
-        echo "[warn] OpenMPI installed but no mpirun/mpiexec found (likely external stub) – installing MPICH fallback" >&2
+        echo "[warn] OpenMPI present but mpirun absent – trying MPICH" >&2
         conda remove -y openmpi mpi || true
       fi
-      conda install -y -c conda-forge mpich mpi4py || { echo "ERROR: Failed to install MPICH" >&2; exit 1; }
+      echo "[mpi] Installing MPICH + mpi4py" >&2
+      set +e
+      conda install -y $OVERRIDE_FLAG $INSTALL_CHANNEL_ARGS mpich mpi4py 2> >(tee .mpi_mpich_err.log >&2)
+      rc=$?
+      set -e
+      if [[ $rc -ne 0 ]] && grep -q 'CondaToSNonInteractiveError' .mpi_mpich_err.log; then
+        print_tos_help
+        rm -f .mpi_mpich_err.log
+        exit 45
+      fi
+      rm -f .mpi_mpich_err.log || true
       hash -r
-      detect_mpi || { echo "ERROR: mpirun/mpiexec still missing after OpenMPI+MPICH attempts" >&2; exit 1; }
+      detect_mpi || { echo "ERROR: mpirun/mpiexec still missing after attempts" >&2; exit 1; }
     fi
     echo "[sanity] Using detected $MPI_CMD_BIN after install" >&2
     "$MPI_CMD_BIN" --version 2>&1 | head -n 1 || true
