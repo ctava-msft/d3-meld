@@ -708,6 +708,7 @@ def _bootstrap():
                 "programs that use SIGALRM."
             )
 
+    @contextlib.contextmanager
     def timeout(seconds, exception):
         if threading.currentThread().name != "MainThread":
             raise _StateException(
@@ -737,9 +738,15 @@ def _bootstrap():
                     # cancel our timer
                     signal.setitimer(signal.ITIMER_REAL, 0)
                     timers.pop()
-                    if timers:
+                    if len(timers) > depth:
+                        timeleft = timers[-1].expiration - time.time()
+                        if timeleft > 0:
+                            signal.setitimer(signal.ITIMER_REAL, timeleft)
+                        else:
+                            handler()
+        else:
+            yield
 
-    return timeout_context_manager
-
+    return timeout
 
 _timeout = _bootstrap()
