@@ -18,6 +18,7 @@ set -euo pipefail
 #   ./run_mpi_meld.sh myenv.yaml --np 8    # custom env file + np override
 #   ./run_mpi_meld.sh --dry-run            # show commands only
 #   ./run_mpi_meld.sh --resume             # skip setup_meld.py if Data/data_store.dat exists
+#   ./run_mpi_meld.sh --meld-debug-comm     # export MELD_DEBUG_COMM=1 (enable comm instrumentation)
 #
 # Notes:
 # * One replica per GPU is recommended; oversubscription degrades exchange efficiency.
@@ -45,6 +46,7 @@ SCRATCH_BLOCKS=0    # if set (--scratch-blocks) rank0 owns block creation; other
 DO_COMM_PATCH=1     # monkey patch meld.comm with local comm.py (disable with --no-comm-patch)
 ACCEPT_CONDA_TOS=1          # new: accept Anaconda TOS (main, r) before auto-install
 MPI_INSTALL_FORGE_ONLY=0    # new: restrict installs to conda-forge only (avoids needing Anaconda TOS)
+MELD_DEBUG_COMM_FLAG=""     # if set by --meld-debug-comm, exported as MELD_DEBUG_COMM
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -71,6 +73,8 @@ while [[ $# -gt 0 ]]; do
   --allow-partial) ALLOW_PARTIAL=1 ;;
   --scratch-blocks) SCRATCH_BLOCKS=1 ;;
     --no-comm-patch) DO_COMM_PATCH=0 ;;
+  --meld-debug-comm) MELD_DEBUG_COMM_FLAG=1 ;;
+  --meld-debug-comm=*) MELD_DEBUG_COMM_FLAG="${1#--meld-debug-comm=}" ;;
     *.yml|*.yaml) ENV_FILE="$1" ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
@@ -440,6 +444,10 @@ fi
 export CUDA_VISIBLE_DEVICES="$GPU_LIST"
 export MELD_RANKS_PER_GPU="$RANKS_PER_GPU"
 export SCRATCH_BLOCKS="$SCRATCH_BLOCKS"
+if [[ -n "$MELD_DEBUG_COMM_FLAG" ]]; then
+  export MELD_DEBUG_COMM="$MELD_DEBUG_COMM_FLAG"
+  echo "[debug] Enabled communicator instrumentation (MELD_DEBUG_COMM=$MELD_DEBUG_COMM_FLAG)" >&2
+fi
 
 PY_EXEC="python"
 LAUNCH_SCRIPT="launch_remd.py"

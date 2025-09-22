@@ -70,6 +70,35 @@ class MPICommunicator(interfaces.ICommunicator):
         self._n_replicas = n_replicas
         self._timeout = timeout
         self._timeout_message = f"Call to {{:s}} did not complete in {timeout} seconds"
+        # Enable verbose communication diagnostics when env var set
+        self._debug_comm = os.environ.get("MELD_DEBUG_COMM", "0").lower() in ("1", "true", "yes", "on")
+
+    # ---- Internal debug helpers ----
+    def _summarize_structure(self, label: str, obj):  # pragma: no cover (diagnostic only)
+        if not self._debug_comm:
+            return
+        try:
+            def shape_repr(x):
+                try:
+                    import numpy as _np  # type: ignore
+                    if isinstance(x, _np.ndarray):
+                        return f"ndarray{list(x.shape)}"
+                except Exception:
+                    pass
+                return type(x).__name__
+
+            if isinstance(obj, list):
+                types = [shape_repr(x) for x in obj[:8]]  # sample
+                extra = max(0, len(obj) - 8)
+                logger.info("[comm-debug] %s: list(len=%d sample_types=%s%s)", label, len(obj), types, f" +{extra} more" if extra else "")
+                # Detect nested list layers quickly
+                nested_counts = sum(1 for x in obj if isinstance(x, list))
+                if nested_counts:
+                    logger.info("[comm-debug] %s: nested sublists=%d", label, nested_counts)
+            else:
+                logger.info("[comm-debug] %s: %s", label, shape_repr(obj))
+        except Exception as e:
+            logger.warning("[comm-debug] summarize failed for %s: %s", label, e)
 
     def __getstate__(self) -> Dict[str, Any]:
         # don't pickle _mpi_comm
@@ -121,6 +150,7 @@ class MPICommunicator(interfaces.ICommunicator):
             the block of alpha values for the leader
         """
         alpha_blocks = self._to_blocks(all_alphas)
+        self._summarize_structure("alpha_blocks(pre-scatter)", alpha_blocks)
         with _timeout(
             self._timeout,
             RuntimeError(self._timeout_message.format("broadcast_alphas_to_workers")),
@@ -139,7 +169,9 @@ class MPICommunicator(interfaces.ICommunicator):
             self._timeout,
             RuntimeError(self._timeout_message.format("receive_alphas_from_leader")),
         ):
-            return self._mpi_comm.scatter(None, root=0)
+            result = self._mpi_comm.scatter(None, root=0)
+            self._summarize_structure("worker_alpha_block(post-scatter)", result)
+            return result
 
     @util.log_timing(logger)
     def distribute_states_to_workers(
@@ -156,12 +188,38 @@ class MPICommunicator(interfaces.ICommunicator):
         """
         # Divide the states into blocks
         state_blocks = self._to_blocks(all_states)
+        self._summarize_structure("state_blocks(raw)", state_blocks)
+        # Defensive normalization: ensure each block is a flat list of states
+        norm_blocks: List[List[interfaces.IState]] = []
+        for blk in state_blocks:
+            # Unwrap pathological cases like [[state]] or [[[state]]]
+            while (
+                isinstance(blk, list)
+                and len(blk) == 1
+                and isinstance(blk[0], list)
+                and blk[0]
+            ):
+                blk = blk[0]  # type: ignore
+            # If any element is a list, flatten one level
+            if any(isinstance(x, list) for x in blk):  # type: ignore
+                flat: List[interfaces.IState] = []
+                for x in blk:  # type: ignore
+                    if isinstance(x, list):
+                        flat.extend(x)
+                    else:
+                        flat.append(x)  # type: ignore[arg-type]
+                blk = flat  # type: ignore
+            norm_blocks.append(blk)  # type: ignore[arg-type]
+        state_blocks = norm_blocks
+        self._summarize_structure("state_blocks(normalized)", state_blocks)
 
         with _timeout(
             self._timeout,
             RuntimeError(self._timeout_message.format("broadcast_states_to_workers")),
         ):
-            return self._mpi_comm.scatter(state_blocks, root=0)
+            result = self._mpi_comm.scatter(state_blocks, root=0)
+            self._summarize_structure("leader_state_block(sent-to-leader-returned)", result)
+            return result
 
     @util.log_timing(logger)
     def receive_states_from_leader(self) -> List[interfaces.IState]:
@@ -175,7 +233,9 @@ class MPICommunicator(interfaces.ICommunicator):
             self._timeout,
             RuntimeError(self._timeout_message.format("receive_state_from_leader")),
         ):
-            return self._mpi_comm.scatter(None, root=0)
+            result = self._mpi_comm.scatter(None, root=0)
+            self._summarize_structure("worker_state_block(received)", result)
+            return result
 
     @util.log_timing(logger)
     def gather_states_from_workers(
@@ -193,9 +253,12 @@ class MPICommunicator(interfaces.ICommunicator):
             self._timeout,
             RuntimeError(self._timeout_message.format("gather_states_from_workers")),
         ):
+            self._summarize_structure("gather_states_from_workers.input_block", state_on_leader)
             blocks = self._mpi_comm.gather(state_on_leader, root=0)
 
+        self._summarize_structure("gather_states_from_workers.collected_blocks", blocks)
         flat = self._from_blocks(blocks)
+        self._summarize_structure("gather_states_from_workers.flat_initial", flat)
         # Guard against accidental nested singleton lists (e.g., [[State], [State]])
         flat = [s for s in flat if not (isinstance(s, list) and len(s) == 0)]  # drop empty
         # Unwrap any inner single-element lists
@@ -208,6 +271,7 @@ class MPICommunicator(interfaces.ICommunicator):
                     normalized.extend(s)
             else:
                 normalized.append(s)
+        self._summarize_structure("gather_states_from_workers.normalized", normalized)
         return normalized
 
     @util.log_timing(logger)
@@ -225,6 +289,7 @@ class MPICommunicator(interfaces.ICommunicator):
             self._timeout,
             RuntimeError(self._timeout_message.format("send_states_to_leader")),
         ):
+            self._summarize_structure("send_states_to_leader.block", block)
             self._mpi_comm.gather(block, root=0)
 
     @util.log_timing(logger)
@@ -471,7 +536,6 @@ class MPICommunicator(interfaces.ICommunicator):
                 )
             else:
                 logger.info("hostname: %s, device_id: %d", hostname, device_id)
-            logger.info("hostname: %s, device_id: %d", hostname, device_id)
             return device_id
 
     @util.log_timing(logger)
