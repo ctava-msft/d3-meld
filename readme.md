@@ -85,6 +85,9 @@ replica-exchange until completion (based on stored runner `max_steps`).
 
 Recommendation: keep one replica per GPU for best exchange efficiency; oversubscription usually hurts performance.
 
+### GaMELD Patch Integration
+If you place a `gameld.py` file in the local `patches/` directory it will now be copied over (on environment activation inside `run_mpi_meld.sh`) to override the installed `meld.system.gameld` module. This enables rapid iteration on GaMELD threshold logic without rebuilding the MELD wheel. To disable all patching use `--no-comm-patch`; to require the patch (fail if not applied) add `--require-comm-patch`.
+
 
 chmod +x run_gpu_meld.sh
 

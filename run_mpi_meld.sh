@@ -168,9 +168,10 @@ except Exception as e:
 
 meld_root = pathlib.Path(meld.__file__).parent
 targets = [
-    ('comm.py', patch_dir / 'comm.py', meld_root / 'comm.py', True),
-    ('leader.py', patch_dir / 'leader.py', meld_root / 'remd' / 'leader.py', False),
-    ('worker.py', patch_dir / 'worker.py', meld_root / 'remd' / 'worker.py', False),
+  ('comm.py', patch_dir / 'comm.py', meld_root / 'comm.py', True),
+  ('leader.py', patch_dir / 'leader.py', meld_root / 'remd' / 'leader.py', False),
+  ('worker.py', patch_dir / 'worker.py', meld_root / 'remd' / 'worker.py', False),
+  ('gameld.py', patch_dir / 'gameld.py', meld_root / 'system' / 'gameld.py', False),
 ]
 
 overall_fail = False

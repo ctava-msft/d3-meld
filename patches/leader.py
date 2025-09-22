@@ -16,7 +16,7 @@ from meld import interfaces, vault
 from meld.remd import adaptor, ladder, worker
 from meld.remd.permute import permute_states
 try:
-    from meld.system import gameld  # type: ignore
+    from . import gameld  # type: ignore
 except Exception:  # pragma: no cover
     gameld = None
 
