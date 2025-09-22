@@ -131,65 +131,93 @@ activate_conda() {
   fi
   conda activate "$ENV_NAME"
 
-  # Monkey patch meld.comm if requested
+  # Apply source patches from ./patches directory (comm.py, leader.py, worker.py)
   if [[ $DO_COMM_PATCH -eq 1 ]]; then
-    if [[ -f "comm.py" ]]; then
-      echo "[patch] Attempting to monkey patch meld.comm with local ./comm.py" >&2
-        COMM_SRC_ABS="$(pwd)/comm.py"
-        export D3_MELD_COMM_SRC="$COMM_SRC_ABS"
-        # Re-export MELD_DEBUG_COMM inside env scope just in case
-        if [[ -n "$MELD_DEBUG_COMM_FLAG" ]] && [[ -z "${MELD_DEBUG_COMM:-}" ]]; then
-          export MELD_DEBUG_COMM="$MELD_DEBUG_COMM_FLAG"
-          echo "[patch-debug] Re-exported MELD_DEBUG_COMM inside env activation" >&2
-        fi
-    python - <<'PY' || echo "[patch] Python patch routine failed (non-fatal)" >&2
-  import sys, shutil, pathlib, importlib, traceback, hashlib, os
-  src_env = os.environ.get("D3_MELD_COMM_SRC")
-  src = pathlib.Path(src_env) if src_env else pathlib.Path("comm.py")
-if not src.exists():
-  sys.exit(0)
+    PATCH_DIR="$(pwd)/patches"
+    if [[ ! -d "$PATCH_DIR" ]]; then
+      echo "[patch] patches/ directory not found; skipping code patch" >&2
+    else
+      # Ensure required env vars visible to Python patch routine
+      export D3_MELD_PATCH_DIR="$PATCH_DIR" REQUIRE_COMM_PATCH VERIFY_COMM
+      if [[ -n "$MELD_DEBUG_COMM_FLAG" ]] && [[ -z "${MELD_DEBUG_COMM:-}" ]]; then
+        export MELD_DEBUG_COMM="$MELD_DEBUG_COMM_FLAG"
+        echo "[patch-debug] Exported MELD_DEBUG_COMM inside env activation" >&2
+      fi
+      python - <<'PY' || echo "[patch] Python patch routine failed (non-fatal)" >&2
+import sys, os, pathlib, shutil, hashlib, traceback
+
+req = os.environ.get('REQUIRE_COMM_PATCH') == '1'
+verify = os.environ.get('VERIFY_COMM') == '1'
+patch_dir_env = os.environ.get('D3_MELD_PATCH_DIR')
+if not patch_dir_env:
+    sys.exit(0)
+patch_dir = pathlib.Path(patch_dir_env)
+if not patch_dir.is_dir():
+    print(f"[patch] patch dir {patch_dir} missing", file=sys.stderr)
+    if req:
+        sys.exit(97)
+    sys.exit(0)
+
 try:
-  import meld
+    import meld  # noqa
 except Exception as e:
-  print(f"[patch] meld import failed: {e}; skipping", file=sys.stderr)
-  sys.exit(0)
-target = pathlib.Path(meld.__file__).parent / "comm.py"
-if not target.exists():
-  print(f"[patch] Installed meld.comm.py not found at {target}; skipping", file=sys.stderr)
-  sys.exit(0)
-backup = target.with_suffix(".py.orig")
-marker_name = b"_summarize_structure"
-try:
-  if not backup.exists():
-    shutil.copy2(target, backup)
-    print(f"[patch] Backed up original to {backup}", file=sys.stderr)
-  shutil.copy2(src, target)
-  print(f"[patch] Replaced {target} with local comm.py", file=sys.stderr)
-  data = target.read_bytes()
-  sha = hashlib.sha256(data).hexdigest()
-  has_marker = marker_name in data
-  print(f"[patch] verify sha256={sha} has_marker={has_marker}", file=sys.stderr)
-  if os.environ.get('VERIFY_COMM') == '1':
-    print(f"[patch][verify] target_size={len(data)} bytes", file=sys.stderr)
-    snippet = data[:160].replace(b"\n", b"\\n")
-    print(f"[patch][verify] head160={snippet!r}", file=sys.stderr)
-  # Invalidate import caches; ensure future imports use patched file
-  import importlib
-  importlib.invalidate_caches()
-except Exception as e:
-  print(f"[patch] Failed to replace meld.comm: {e}", file=sys.stderr)
-  traceback.print_exc()
-  if os.environ.get('REQUIRE_COMM_PATCH') == '1':
-    sys.exit(97)
-else:
-  if not has_marker and os.environ.get('REQUIRE_COMM_PATCH') == '1':
-    print('[patch] ERROR: marker _summarize_structure missing after patch; aborting (--require-comm-patch).', file=sys.stderr)
-    sys.exit(98)
+    print(f"[patch] Could not import meld: {e}", file=sys.stderr)
+    if req:
+        sys.exit(97)
+    sys.exit(0)
+
+meld_root = pathlib.Path(meld.__file__).parent
+targets = [
+    ('comm.py', patch_dir / 'comm.py', meld_root / 'comm.py', True),
+    ('leader.py', patch_dir / 'leader.py', meld_root / 'remd' / 'leader.py', False),
+    ('worker.py', patch_dir / 'worker.py', meld_root / 'remd' / 'worker.py', False),
+]
+
+overall_fail = False
+missing_marker_fail = False
+marker = b'_summarize_structure'
+
+for label, src, dest, check_marker in targets:
+    if not src.exists():
+        print(f"[patch] {label}: source {src} not found (skip)", file=sys.stderr)
+        if req: overall_fail = True
+        continue
+    if not dest.exists():
+        print(f"[patch] {label}: destination {dest} missing (skip)", file=sys.stderr)
+        if req: overall_fail = True
+        continue
+    backup = dest.with_suffix(dest.suffix + '.orig')
+    try:
+        if not backup.exists():
+            shutil.copy2(dest, backup)
+            print(f"[patch] {label}: backed up original -> {backup}", file=sys.stderr)
+        shutil.copy2(src, dest)
+        data = dest.read_bytes()
+        sha = hashlib.sha256(data).hexdigest()
+        has_marker = marker in data if check_marker else True
+        print(f"[patch] {label}: replaced {dest.name} sha256={sha} marker_ok={has_marker}", file=sys.stderr)
+        if verify:
+            head = data[:160].replace(b'\n', b'\\n')
+            print(f"[patch][verify] {label}: size={len(data)} head160={head!r}", file=sys.stderr)
+        if check_marker and not has_marker:
+            missing_marker_fail = True
+    except Exception as e:
+        overall_fail = True
+        print(f"[patch] {label}: FAILED to patch -> {e}", file=sys.stderr)
+        traceback.print_exc()
+
+if overall_fail:
+    print('[patch] One or more patch operations failed', file=sys.stderr)
+    if req:
+        sys.exit(97)
+if missing_marker_fail:
+    print('[patch] comm.py marker _summarize_structure missing after patch', file=sys.stderr)
+    if req:
+        sys.exit(98)
 PY
-      # Optional verification import to force module reload under debug
       if [[ -n "$MELD_DEBUG_COMM_FLAG" ]]; then
         python - <<'PY'
-import os, importlib, sys
+import os, sys
 try:
     import meld.comm as mc
     print(f"[verify-debug] meld.comm path={mc.__file__} debug_env={os.environ.get('MELD_DEBUG_COMM')}", file=sys.stderr)
@@ -197,11 +225,9 @@ except Exception as e:
     print(f"[verify-debug] Failed to import meld.comm after patch: {e}", file=sys.stderr)
 PY
       fi
-    else
-      echo "[patch] comm.py not found in current directory; skipping monkey patch" >&2
     fi
   else
-    echo "[patch] DO_COMM_PATCH=0 -> Skipping meld.comm monkey patch" >&2
+    echo "[patch] DO_COMM_PATCH=0 -> Skipping code patches" >&2
   fi
 } # Close activate_conda (was missing)
 
