@@ -565,35 +565,47 @@ class MPICommunicator(interfaces.ICommunicator):
         blocks = list(blocks)
         return [item for sublist in blocks for item in sublist]
 
-    # ---- Backward compatibility shims (revised) ----
-    def _unwrap_single(self, value):
-        if isinstance(value, (list, tuple)) and len(value) == 1:
-            return value[0]
-        return value
+    # ---- Backward compatibility shims (always return lists) ----
+    def _ensure_list(self, obj):
+        if isinstance(obj, (list, tuple)):
+            return list(obj)
+        return [obj]
+
+    def _flatten_one(self, seq):
+        # If seq is a list whose elements are lists of non‑lists (nested one level), flatten.
+        if not isinstance(seq, list):
+            return seq
+        if seq and all(isinstance(x, list) for x in seq):
+            # Only flatten one level if inner elements are not lists themselves
+            if seq[0] and not isinstance(seq[0][0], list):
+                flat = []
+                for sub in seq:
+                    flat.extend(sub)
+                return flat
+        return seq
 
     # Alpha distribution
     def broadcast_alphas_to_workers(self, all_alphas):
-        leader_block = self.distribute_alphas_to_workers(all_alphas)
-        return self._unwrap_single(leader_block)
+        block = self.distribute_alphas_to_workers(all_alphas)
+        return self._ensure_list(block)
 
     def receive_alpha_from_leader(self):
         block = self.receive_alphas_from_leader()
-        return self._unwrap_single(block)
+        return self._ensure_list(block)
 
     # State distribution for MD steps
     def broadcast_states_to_workers(self, all_states):
-        leader_block = self.distribute_states_to_workers(all_states)
-        return self._unwrap_single(leader_block)
+        block = self.distribute_states_to_workers(all_states)
+        block = self._flatten_one(block)
+        return self._ensure_list(block)  # keep as list (possibly multi-state)
 
     def receive_state_from_leader(self):
         block = self.receive_states_from_leader()
-        return self._unwrap_single(block)
+        block = self._flatten_one(block)
+        return self._ensure_list(block)
 
     def send_state_to_leader(self, state):
-        # Accept either a single state or a list
-        if not isinstance(state, (list, tuple)):
-            state = [state]
-        return self.send_states_to_leader(state)
+        return self.send_states_to_leader(self._ensure_list(state))
 
     # Full state broadcast for energy calculation
     def broadcast_states_for_energy_calc_to_workers(self, states):
@@ -608,8 +620,7 @@ class MPICommunicator(interfaces.ICommunicator):
                 raise ValueError("Leader must supply states for exchange_states_for_energy_calc")
             self.broadcast_all_states_to_workers(states)
             return states
-        else:
-            return self.receive_all_states_from_leader()
+        return self.receive_all_states_from_leader()
 def _get_mpi_comm_world():
     """
     Helper function to return the comm_world.
