@@ -565,7 +565,48 @@ class MPICommunicator(interfaces.ICommunicator):
         blocks = list(blocks)
         return [item for sublist in blocks for item in sublist]
 
+    # ---- Backward compatibility shims for updated ICommunicator abstract names ----
+    # These satisfy older/newer abstract method signatures expected by meld.interfaces.ICommunicator.
 
+    # Alpha distribution
+    def broadcast_alphas_to_workers(self, all_alphas):
+        return self.distribute_alphas_to_workers(all_alphas)
+
+    def receive_alpha_from_leader(self):
+        # Singular alias -> underlying plural form already returns a list
+        return self.receive_alphas_from_leader()
+
+    # State distribution for MD steps
+    def broadcast_states_to_workers(self, all_states):
+        return self.distribute_states_to_workers(all_states)
+
+    def receive_state_from_leader(self):
+        return self.receive_states_from_leader()
+
+    def send_state_to_leader(self, block):
+        # Underlying plural method already gathers the block
+        return self.send_states_to_leader(block)
+
+    # Full state broadcast for energy calculation
+    def broadcast_states_for_energy_calc_to_workers(self, states):
+        return self.broadcast_all_states_to_workers(states)
+
+    def receive_states_for_energy_calc_from_leader(self):
+        return self.receive_all_states_from_leader()
+
+    # Unified exchange helper (sometimes required by newer interface)
+    def exchange_states_for_energy_calc(self, states=None):
+        """
+        If leader: broadcast provided states, return them.
+        If worker: receive states, return them.
+        """
+        if self.is_leader():
+            if states is None:
+                raise ValueError("Leader must supply states for exchange_states_for_energy_calc")
+            self.broadcast_all_states_to_workers(states)
+            return states
+        else:
+            return self.receive_all_states_from_leader()
 def _get_mpi_comm_world():
     """
     Helper function to return the comm_world.
