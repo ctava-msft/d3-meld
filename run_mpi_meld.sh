@@ -234,7 +234,6 @@ PY
       echo "[meld] Local repo not found at $root_dir/meld (set USE_LOCAL_MELD=0 to silence)" >&2
     fi
   fi
-}
 
 # --- Sanity checks ---
 echo "[sanity] nvidia-smi -L" >&2
