@@ -565,27 +565,35 @@ class MPICommunicator(interfaces.ICommunicator):
         blocks = list(blocks)
         return [item for sublist in blocks for item in sublist]
 
-    # ---- Backward compatibility shims for updated ICommunicator abstract names ----
-    # These satisfy older/newer abstract method signatures expected by meld.interfaces.ICommunicator.
+    # ---- Backward compatibility shims (revised) ----
+    def _unwrap_single(self, value):
+        if isinstance(value, (list, tuple)) and len(value) == 1:
+            return value[0]
+        return value
 
     # Alpha distribution
     def broadcast_alphas_to_workers(self, all_alphas):
-        return self.distribute_alphas_to_workers(all_alphas)
+        leader_block = self.distribute_alphas_to_workers(all_alphas)
+        return self._unwrap_single(leader_block)
 
     def receive_alpha_from_leader(self):
-        # Singular alias -> underlying plural form already returns a list
-        return self.receive_alphas_from_leader()
+        block = self.receive_alphas_from_leader()
+        return self._unwrap_single(block)
 
     # State distribution for MD steps
     def broadcast_states_to_workers(self, all_states):
-        return self.distribute_states_to_workers(all_states)
+        leader_block = self.distribute_states_to_workers(all_states)
+        return self._unwrap_single(leader_block)
 
     def receive_state_from_leader(self):
-        return self.receive_states_from_leader()
+        block = self.receive_states_from_leader()
+        return self._unwrap_single(block)
 
-    def send_state_to_leader(self, block):
-        # Underlying plural method already gathers the block
-        return self.send_states_to_leader(block)
+    def send_state_to_leader(self, state):
+        # Accept either a single state or a list
+        if not isinstance(state, (list, tuple)):
+            state = [state]
+        return self.send_states_to_leader(state)
 
     # Full state broadcast for energy calculation
     def broadcast_states_for_energy_calc_to_workers(self, states):
@@ -594,12 +602,7 @@ class MPICommunicator(interfaces.ICommunicator):
     def receive_states_for_energy_calc_from_leader(self):
         return self.receive_all_states_from_leader()
 
-    # Unified exchange helper (sometimes required by newer interface)
     def exchange_states_for_energy_calc(self, states=None):
-        """
-        If leader: broadcast provided states, return them.
-        If worker: receive states, return them.
-        """
         if self.is_leader():
             if states is None:
                 raise ValueError("Leader must supply states for exchange_states_for_energy_calc")
