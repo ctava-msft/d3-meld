@@ -136,8 +136,7 @@ try:
 except Exception:
     pass
 PY
-      then
-        echo "[meld] Using existing local MELD source (editable)" >&2
+      echo "[meld] Using existing local MELD source (editable)" >&2
       else
         echo "[meld] Installing local MELD in editable mode from $local_repo" >&2
         pip install -e "$local_repo" --no-deps >/dev/null 2>&1 || pip install -e "$local_repo" --no-deps || echo "[meld] WARNING: Editable install failed; may still use conda version" >&2
