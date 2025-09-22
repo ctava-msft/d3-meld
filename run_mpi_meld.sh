@@ -19,6 +19,8 @@ set -euo pipefail
 #   ./run_mpi_meld.sh --dry-run            # show commands only
 #   ./run_mpi_meld.sh --resume             # skip setup_meld.py if Data/data_store.dat exists
 #   ./run_mpi_meld.sh --meld-debug-comm     # export MELD_DEBUG_COMM=1 (enable comm instrumentation)
+#   ./run_mpi_meld.sh --require-comm-patch   # fail fast if meld.comm was not replaced
+#   ./run_mpi_meld.sh --verify-comm          # print verification (path, sha256, has _summarize_structure)
 #
 # Notes:
 # * One replica per GPU is recommended; oversubscription degrades exchange efficiency.
@@ -47,6 +49,8 @@ DO_COMM_PATCH=1     # monkey patch meld.comm with local comm.py (disable with --
 ACCEPT_CONDA_TOS=1          # new: accept Anaconda TOS (main, r) before auto-install
 MPI_INSTALL_FORGE_ONLY=0    # new: restrict installs to conda-forge only (avoids needing Anaconda TOS)
 MELD_DEBUG_COMM_FLAG=""     # if set by --meld-debug-comm, exported as MELD_DEBUG_COMM
+REQUIRE_COMM_PATCH=0        # if set (--require-comm-patch) abort if patch fails
+VERIFY_COMM=0               # if set (--verify-comm) print verification info after patch
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -75,6 +79,8 @@ while [[ $# -gt 0 ]]; do
     --no-comm-patch) DO_COMM_PATCH=0 ;;
   --meld-debug-comm) MELD_DEBUG_COMM_FLAG=1 ;;
   --meld-debug-comm=*) MELD_DEBUG_COMM_FLAG="${1#--meld-debug-comm=}" ;;
+  --require-comm-patch) REQUIRE_COMM_PATCH=1 ;;
+  --verify-comm) VERIFY_COMM=1 ;;
     *.yml|*.yaml) ENV_FILE="$1" ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
@@ -123,33 +129,48 @@ activate_conda() {
   if [[ $DO_COMM_PATCH -eq 1 ]]; then
     if [[ -f "comm.py" ]]; then
       echo "[patch] Attempting to monkey patch meld.comm with local ./comm.py" >&2
-      python - <<'PY' || echo "[patch] Python patch routine failed (non-fatal)" >&2
-import sys, shutil, pathlib, importlib, traceback
+    python - <<'PY' || echo "[patch] Python patch routine failed (non-fatal)" >&2
+import sys, shutil, pathlib, importlib, traceback, hashlib, os
 src = pathlib.Path("comm.py")
 if not src.exists():
-    sys.exit(0)
+  sys.exit(0)
 try:
-    import meld
+  import meld
 except Exception as e:
-    print(f"[patch] meld import failed: {e}; skipping", file=sys.stderr)
-    sys.exit(0)
+  print(f"[patch] meld import failed: {e}; skipping", file=sys.stderr)
+  sys.exit(0)
 target = pathlib.Path(meld.__file__).parent / "comm.py"
 if not target.exists():
-    print(f"[patch] Installed meld.comm.py not found at {target}; skipping", file=sys.stderr)
-    sys.exit(0)
+  print(f"[patch] Installed meld.comm.py not found at {target}; skipping", file=sys.stderr)
+  sys.exit(0)
 backup = target.with_suffix(".py.orig")
+marker_name = b"_summarize_structure"
 try:
-    if not backup.exists():
-        shutil.copy2(target, backup)
-        print(f"[patch] Backed up original to {backup}", file=sys.stderr)
-    shutil.copy2(src, target)
-    print(f"[patch] Replaced {target} with local comm.py", file=sys.stderr)
-    # Invalidate import caches; ensure future imports use patched file
-    import importlib
-    importlib.invalidate_caches()
+  if not backup.exists():
+    shutil.copy2(target, backup)
+    print(f"[patch] Backed up original to {backup}", file=sys.stderr)
+  shutil.copy2(src, target)
+  print(f"[patch] Replaced {target} with local comm.py", file=sys.stderr)
+  data = target.read_bytes()
+  sha = hashlib.sha256(data).hexdigest()
+  has_marker = marker_name in data
+  print(f"[patch] verify sha256={sha} has_marker={has_marker}", file=sys.stderr)
+  if os.environ.get('VERIFY_COMM') == '1':
+    print(f"[patch][verify] target_size={len(data)} bytes", file=sys.stderr)
+    snippet = data[:160].replace(b"\n", b"\\n")
+    print(f"[patch][verify] head160={snippet!r}", file=sys.stderr)
+  # Invalidate import caches; ensure future imports use patched file
+  import importlib
+  importlib.invalidate_caches()
 except Exception as e:
-    print(f"[patch] Failed to replace meld.comm: {e}", file=sys.stderr)
-    traceback.print_exc()
+  print(f"[patch] Failed to replace meld.comm: {e}", file=sys.stderr)
+  traceback.print_exc()
+  if os.environ.get('REQUIRE_COMM_PATCH') == '1':
+    sys.exit(97)
+else:
+  if not has_marker and os.environ.get('REQUIRE_COMM_PATCH') == '1':
+    print('[patch] ERROR: marker _summarize_structure missing after patch; aborting (--require-comm-patch).', file=sys.stderr)
+    sys.exit(98)
 PY
     else
       echo "[patch] comm.py not found in current directory; skipping monkey patch" >&2
@@ -415,6 +436,7 @@ activate_conda
 if [[ $SKIP_ENV -eq 0 ]]; then
   trap 'conda deactivate || true' EXIT
 fi
+export REQUIRE_COMM_PATCH VERIFY_COMM
 
 # Ensure CUDA compiler path (optional)
 if [[ -z "${OPENMM_CUDA_COMPILER:-}" ]] && command -v nvcc &>/dev/null; then
