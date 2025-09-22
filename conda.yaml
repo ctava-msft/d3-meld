@@ -6,10 +6,10 @@ channels:
 dependencies:
   - python=3.10
   - pip
-  - openmm
+  - openmm>=8.0
   # mpi4py will pull in msmpi (Windows) or openmpi (Linux) automatically.
   - mpi4py
-  - meld  # Note: runtime scripts attempt editable install from ../meld if present (override with USE_LOCAL_MELD=0)
+  - meld
   - mdtraj
   - biopython
   - numpy

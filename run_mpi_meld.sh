@@ -113,10 +113,28 @@ activate_conda() {
   if [[ -f requirements.txt ]]; then
     echo "[setup] Installing pip requirements from requirements.txt" >&2
     pip install -r requirements.txt
-    if ! python - <<'PY' >/dev/null 2>&1; then
-import openmm
+    # Validate OpenMM (must be >=8.0 for top-level 'openmm' imports)
+    if ! python - <<'PY'; then
+import sys
+try:
+    import openmm
+    from openmm import unit  # noqa
+    ver = getattr(openmm, '__version__', 'unknown')
+    from packaging.version import Version
+    if Version(ver) < Version("8.0"):
+        print(f"[error] OpenMM version {ver} < 8.0; requires openmm>=8.0 for MELD imports.", file=sys.stderr)
+        sys.exit(2)
+    print(f"[setup] Detected OpenMM {ver} (OK)")
+except ModuleNotFoundError:
+    print("[error] OpenMM not importable. Install with: conda install -c conda-forge 'openmm>=8.0'", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f"[error] OpenMM validation failed: {e}", file=sys.stderr)
+    sys.exit(3)
 PY
-    echo "[warn] openmm not importable after pip install; install via: conda install -c conda-forge openmm" >&2
+    then
+      echo "[fatal] OpenMM validation failed; aborting. See messages above." >&2
+      return 12
     fi
   else
     echo "[setup] requirements.txt not found; skipping pip bulk install" >&2
