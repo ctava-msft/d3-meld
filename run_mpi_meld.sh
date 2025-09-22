@@ -109,19 +109,78 @@ activate_conda() {
   fi
   conda activate "$ENV_NAME"
 
+  # OpenMM upgrade handling (avoid pip replacing conda package causing uninstall-distutils-installed-package)
+  # Set USE_PIP_OPENMM=1 to allow pip to manage openmm instead.
+  if [[ "${USE_PIP_OPENMM:-0}" != "1" ]]; then
+    if python - <<'PY'; then
+import sys
+try:
+    import openmm
+    ver = getattr(openmm,'__version__','0')
+    major = int(ver.split('.')[0]) if ver.split('.')[0].isdigit() else 0
+    if major >= 8:
+        sys.exit(0)  # OK
+    else:
+        sys.exit(2)  # too old
+except ModuleNotFoundError:
+    sys.exit(1)      # missing
+except Exception:
+    sys.exit(3)      # unknown issue
+PY
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+      echo "[openmm] Missing or version <8 detected (rc=$rc). Attempting conda upgrade to openmm>=8.0." >&2
+      conda install -y -c conda-forge "openmm>=8.0" || {
+        echo "[openmm] Conda upgrade failed. You may try: conda remove openmm && conda install -c conda-forge 'openmm>=8.0'" >&2
+      }
+      # Re-validate
+      if ! python - <<'PY'; then
+import sys
+try:
+    import openmm
+    ver = getattr(openmm,'__version__','0')
+    major = int(ver.split('.')[0]) if ver.split('.')[0].isdigit() else 0
+    if major < 8:
+        print(f"[error] After attempted upgrade still have OpenMM {ver}.", file=sys.stderr)
+        sys.exit(2)
+    print(f"[openmm] Using OpenMM {ver} (conda).")
+except ModuleNotFoundError:
+    print("[error] OpenMM still not importable after conda install.", file=sys.stderr)
+    sys.exit(1)
+PY
+      echo "[fatal] OpenMM upgrade/validation failed. Aborting." >&2
+      return 14
+      fi
+      OPENMM_CONDA_UPGRADED=1
+    else
+      OPENMM_CONDA_UPGRADED=0
+    fi
+  else
+    echo "[openmm] USE_PIP_OPENMM=1 -> will allow pip to manage openmm" >&2
+  fi
+
   # NEW: Install supplemental pip requirements (mirrors conda.yaml) before local MELD editable install.
   if [[ -f requirements.txt ]]; then
     echo "[setup] Installing pip requirements from requirements.txt" >&2
-    pip install -r requirements.txt
+    REQ_FILE="requirements.txt"
+    if [[ "${USE_PIP_OPENMM:-0}" != "1" && "${OPENMM_CONDA_UPGRADED:-0}" == "1" ]]; then
+      # Strip openmm line to prevent pip downgrading or uninstall attempts
+      REQ_TMP=$(mktemp)
+      grep -viE '^[[:space:]]*openmm([>=< ]|$)' "$REQ_FILE" > "$REQ_TMP"
+      REQ_FILE="$REQ_TMP"
+      echo "[openmm] Filtered openmm from requirements (managed by conda)" >&2
+    fi
+    pip install -r "$REQ_FILE"
+    [[ -n "${REQ_TMP:-}" && -f "$REQ_TMP" ]] && rm -f "$REQ_TMP"
     # Validate OpenMM (must be >=8.0 for top-level 'openmm' imports)
     if ! python - <<'PY'; then
 import sys
 try:
     import openmm
     from openmm import unit  # noqa
-    ver = getattr(openmm, '__version__', 'unknown')
-    from packaging.version import Version
-    if Version(ver) < Version("8.0"):
+    ver = getattr(openmm,'__version__','unknown')
+    major = int(ver.split('.')[0]) if ver.split('.')[0].isdigit() else 0
+    if major < 8:
         print(f"[error] OpenMM version {ver} < 8.0; requires openmm>=8.0 for MELD imports.", file=sys.stderr)
         sys.exit(2)
     print(f"[setup] Detected OpenMM {ver} (OK)")
@@ -132,8 +191,9 @@ except Exception as e:
     print(f"[error] OpenMM validation failed: {e}", file=sys.stderr)
     sys.exit(3)
 PY
-    echo "[fatal] OpenMM validation failed; aborting. See messages above." >&2
-    return 12
+    then
+      echo "[fatal] OpenMM validation failed; aborting. See messages above." >&2
+      return 12
     fi
   else
     echo "[setup] requirements.txt not found; skipping pip bulk install" >&2

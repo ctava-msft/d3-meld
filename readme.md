@@ -161,6 +161,37 @@ rmsd_all_overlay.png  rmsd_follow.00.dcd.png  rmsd_trajectory.00.dcd.png
 - Check GPU visibility:
   nvidia-smi
 
+## Troubleshooting (OpenMM Upgrade)
+
+If you see:
+```
+error: uninstall-distutils-installed-package
+Cannot uninstall OpenMM 7.7.0
+```
+Cause: pip tries to replace a conda-installed OpenMM (7.7.0) with >=8.0 and refuses to uninstall the distutils-style package.
+
+Resolution (preferred):
+```
+conda remove openmm
+conda install -c conda-forge "openmm>=8.0"
+```
+
+If you must let pip manage it (not recommended when using conda):
+```
+pip install --ignore-installed "openmm>=8.0"
+```
+
+Script behavior:
+- `run_mpi_meld.sh` now auto-detects OpenMM<8 and performs a conda upgrade first.
+- It removes `openmm` from the pip requirements pass after a successful conda upgrade to avoid conflicts.
+- Override with `USE_PIP_OPENMM=1` to force pip to manage OpenMM.
+
+Verify:
+```
+python -c "import openmm,sys;print(openmm.__version__)"
+```
+Expect >= 8.0.
+
 ## Monitoring
 
 grep 'Running replica exchange step ' ./remd.log | tail -n 40
