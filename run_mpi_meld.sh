@@ -129,9 +129,12 @@ activate_conda() {
   if [[ $DO_COMM_PATCH -eq 1 ]]; then
     if [[ -f "comm.py" ]]; then
       echo "[patch] Attempting to monkey patch meld.comm with local ./comm.py" >&2
+        COMM_SRC_ABS="$(pwd)/comm.py"
+        export D3_MELD_COMM_SRC="$COMM_SRC_ABS"
     python - <<'PY' || echo "[patch] Python patch routine failed (non-fatal)" >&2
-import sys, shutil, pathlib, importlib, traceback, hashlib, os
-src = pathlib.Path("comm.py")
+  import sys, shutil, pathlib, importlib, traceback, hashlib, os
+  src_env = os.environ.get("D3_MELD_COMM_SRC")
+  src = pathlib.Path(src_env) if src_env else pathlib.Path("comm.py")
 if not src.exists():
   sys.exit(0)
 try:

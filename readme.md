@@ -127,8 +127,9 @@ grep 'Running replica exchange step' Runs/run/multigpu_*/remd.log | head
 
    ```nohup bash -lc "./run_meld.sh --multi-gpus 0,1 --scratch-blocks" > remd_multigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
-  ```nohup bash -lc "./run_mpi_meld.sh --gpus 0,1,2,3 --np 30  --allow-oversubscribe --meld-debug-comm --require-comm-patch" > remd_mpigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
+  ```nohup bash -lc "./run_mpi_meld.sh --gpus 0,1,2,3 --np 30  --allow-oversubscribe --verify-comm --meld-debug-comm --require-comm-patch --dry-run" > remd_mpigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
+./run_mpi_meld.sh --gpus 0,1 --np 2 --meld-debug-comm --verify-comm --require-comm-patch --dry-run
 
     ```nohup bash -lc "./run_mpi_meld.sh --gpus 0,1,2,3 --np 30 --auto-install-mpi" > remd_mpigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 

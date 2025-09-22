@@ -25,6 +25,35 @@ from . import interfaces, util
 
 logger = logging.getLogger(__name__)
 
+# Import-time banner to verify patched communicator is active
+try:  # pragma: no cover (diagnostic only)
+    if os.environ.get("MELD_DEBUG_COMM"):
+        sys.stderr.write(f"[comm-debug] patched comm module loaded: {__file__}\n")
+        sys.stderr.flush()
+except Exception:
+    pass
+
+# Force a basic logger configuration and stderr mirroring when debugging is enabled.
+_COMM_DEBUG_ACTIVE = os.environ.get("MELD_DEBUG_COMM", "0").lower() in ("1", "true", "yes", "on")
+if _COMM_DEBUG_ACTIVE:
+    try:  # pragma: no cover (diagnostic only)
+        if not logger.handlers:
+            _h = logging.StreamHandler()
+            _h.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+            logger.addHandler(_h)
+        logger.setLevel(logging.INFO)
+    except Exception:
+        pass
+
+def _comm_debug_emit_direct(msg: str):  # pragma: no cover (diagnostic only)
+    if not _COMM_DEBUG_ACTIVE:
+        return
+    try:
+        sys.stderr.write(msg.rstrip() + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
 
 # setup exception handling to abort when there is unhandled exception
 sys_excepthook = sys.excepthook
@@ -90,15 +119,23 @@ class MPICommunicator(interfaces.ICommunicator):
             if isinstance(obj, list):
                 types = [shape_repr(x) for x in obj[:8]]  # sample
                 extra = max(0, len(obj) - 8)
-                logger.info("[comm-debug] %s: list(len=%d sample_types=%s%s)", label, len(obj), types, f" +{extra} more" if extra else "")
+                msg = f"[comm-debug] {label}: list(len={len(obj)} sample_types={types}{' +'+str(extra)+' more' if extra else ''})"
+                logger.info(msg)
+                _comm_debug_emit_direct(msg)
                 # Detect nested list layers quickly
                 nested_counts = sum(1 for x in obj if isinstance(x, list))
                 if nested_counts:
-                    logger.info("[comm-debug] %s: nested sublists=%d", label, nested_counts)
+                    msg2 = f"[comm-debug] {label}: nested sublists={nested_counts}"
+                    logger.info(msg2)
+                    _comm_debug_emit_direct(msg2)
             else:
-                logger.info("[comm-debug] %s: %s", label, shape_repr(obj))
+                msg = f"[comm-debug] {label}: {shape_repr(obj)}"
+                logger.info(msg)
+                _comm_debug_emit_direct(msg)
         except Exception as e:
-            logger.warning("[comm-debug] summarize failed for %s: %s", label, e)
+            msg = f"[comm-debug] summarize failed for {label}: {e}"
+            logger.warning(msg)
+            _comm_debug_emit_direct(msg)
 
     def __getstate__(self) -> Dict[str, Any]:
         # don't pickle _mpi_comm
