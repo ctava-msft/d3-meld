@@ -112,7 +112,7 @@ activate_conda() {
   # OpenMM upgrade handling (avoid pip replacing conda package causing uninstall-distutils-installed-package)
   # Set USE_PIP_OPENMM=1 to allow pip to manage openmm instead.
   if [[ "${USE_PIP_OPENMM:-0}" != "1" ]]; then
-    if python - <<'PY'; then
+    python - <<'PY'
 import sys
 try:
     import openmm
@@ -234,6 +234,7 @@ PY
       echo "[meld] Local repo not found at $root_dir/meld (set USE_LOCAL_MELD=0 to silence)" >&2
     fi
   fi
+} # Close activate_conda (was missing)
 
 # --- Sanity checks ---
 echo "[sanity] nvidia-smi -L" >&2
