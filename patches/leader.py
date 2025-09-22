@@ -15,7 +15,10 @@ import numpy as np
 from meld import interfaces, vault
 from meld.remd import adaptor, ladder, worker
 from meld.remd.permute import permute_states
-from meld.system import gameld
+try:
+    from meld.system import gameld  # type: ignore
+except Exception:  # pragma: no cover
+    gameld = None
 
 logger = logging.getLogger(__name__)
 
@@ -181,10 +184,13 @@ class LeaderReplicaExchangeRunner:
                 permutation_vector, all_states, system_runner, self.step
             )
 
-            if system_runner._options.enable_gamd == True:  # type: ignore
-                # if it's time, change thresholds
+            if getattr(system_runner._options, 'enable_gamd', False) and gameld:
                 leader: bool = True
-                gameld.change_thresholds(self.step, system_runner, communicator, leader)
+                try:
+                    gameld.change_thresholds(self.step, system_runner, communicator, leader)
+                except Exception as e:  # pragma: no cover
+                    import sys
+                    print(f"[leader-gamd] WARNING: change_thresholds failed at step={self.step}: {e}", file=sys.stderr)
 
             # store everything
             store.save_states(all_states, self.step)

@@ -11,7 +11,10 @@ import logging
 from typing import Sequence
 import numpy as np
 from meld import interfaces
-from meld.system import gameld
+try:
+    from meld.system import gameld  # type: ignore
+except Exception:  # pragma: no cover
+    gameld = None  # fallback when gameld module not present
 
 logger = logging.getLogger(__name__)
 
@@ -123,12 +126,13 @@ class WorkerReplicaExchangeRunner:
             energies = self._compute_energies(states, all_states, system_runner)
             communicator.send_energies_to_leader(energies)
 
-            if system_runner._options.enable_gamd == True:   #type: ignore
-                # if it's time, change thresholds
-                leader: bool = False
-                gameld.change_thresholds(
-                    self._step, system_runner, communicator, leader
-                )
+            if getattr(system_runner._options, 'enable_gamd', False) and gameld:
+                leader: bool = False  # worker role
+                try:
+                    gameld.change_thresholds(self._step, system_runner, communicator, leader)
+                except Exception as e:  # pragma: no cover
+                    import sys
+                    print(f"[worker-gamd] WARNING: change_thresholds failed at step={self._step}: {e}", file=sys.stderr)
                 
             self._step += 1
 
