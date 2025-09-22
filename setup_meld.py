@@ -3,6 +3,12 @@
 """Setup a MELD temperature replica-exchange simulation.
 Build an Amber system from an input PDB and sequence, initialize replica states,
 configure ladder/adaptor, and persist setup to a MELD DataStore.
+
+Multi-rank-per-GPU note:
+    When running with multiple MPI ranks per physical GPU (e.g. one leader + N workers),
+    `SimulationConfig.n_replicas` should reflect the number of *exchange replicas* (workers),
+    not counting additional coordinator/leader ranks introduced by custom patches. Leader
+    ranks read the same DataStore but do not require extra replica state entries here.
 """
 import meld
 from meld.remd import ladder, adaptor

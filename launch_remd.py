@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Minimal REMD launcher for MELD Data store.
+"""Minimal REMD launcher for MELD Data store (multi-rank-per-GPU aware).
 
 Responsibilities:
 * Load existing Data/data_store.dat (created by setup_meld.py). If missing, error.
@@ -9,7 +9,11 @@ Responsibilities:
 
 Rank mapping:
 We assume number of MPI ranks == configured number of replicas (SimulationConfig.n_replicas).
-If not, rank>n_replicas are idle and will exit early (safeguard).
+If not, ranks beyond required workers are idle and will exit early (safeguard).
+With multi-rank-per-GPU (leader+workers), `n_replicas` typically counts *worker* replicas;
+leader ranks participate in exchange coordination but do not independently hold unique
+replica indices. This launcher treats all ranks uniformly and defers leader/worker role
+semantics to patched MELD internals via environment variables (MELD_ROLE, etc.).
 
 Environment / config:
 Uses config.load_simulation_config for n_replicas and n_steps; these must match the original
@@ -105,17 +109,16 @@ def main(argv=None) -> int:
 
     if rank == 0:
         print(
-            f"[launch] Config: n_replicas={n_replicas} MPI_size={size} multiplex_factor={replicas_per_rank} expected_ranks={expected_ranks}"
+            f"[launch] Config: n_replicas={n_replicas} MPI_size={size} multiplex_factor={replicas_per_rank} expected_ranks={expected_ranks} ranks_per_gpu={os.getenv('MELD_RANKS_PER_GPU','1')}"
         )
         if size != expected_ranks:
             print(
-                f"[launch] WARNING: MPI world size ({size}) != expected ranks ({expected_ranks}) given multiplex-factor; "
-                "some ranks may be idle or some replicas unassigned.",
+                f"[launch] NOTE: MPI world size ({size}) != expected ranks ({expected_ranks}) based on multiplex-factor; "
+                "excess ranks will idle (multi-rank-per-GPU leader/worker scenario).",
                 file=sys.stderr,
             )
-    # If we have more ranks than needed for multiplexing, politely exit extra ranks
     if size > expected_ranks and rank >= expected_ranks:
-        print(f"[launch][rank {rank}] Exiting early: not needed (expected_ranks={expected_ranks}).")
+        print(f"[launch][rank {rank}] Idling: extra rank beyond expected ({expected_ranks}).")
         return 0
 
     # Decide launcher priority: prefer multiplex if factor>1 and available

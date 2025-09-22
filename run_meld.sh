@@ -99,6 +99,37 @@ fi
 conda activate "$ENV_NAME"
 trap 'conda deactivate || true' EXIT
 
+# Prefer local Git repo version of MELD (../meld) via editable install
+if [[ "${USE_LOCAL_MELD:-1}" == "1" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+  LOCAL_MELD_REPO="$ROOT_DIR/meld"
+  if [[ ! -d "$LOCAL_MELD_REPO" ]] && [[ -n "${MELD_GIT_REPO:-}" ]]; then
+    echo "[meld] Local repo missing; attempting shallow clone from $MELD_GIT_REPO" >&2
+    (cd "$ROOT_DIR" && git clone --depth 1 "$MELD_GIT_REPO" meld) || echo "[meld] WARNING: clone failed" >&2
+  fi
+  if [[ -d "$LOCAL_MELD_REPO/meld" && -f "$LOCAL_MELD_REPO/setup.py" ]]; then
+    if python - <<'PY' 2>/dev/null | grep -q '__LOCAL_MELD_OK__'; then
+__import__('sys')
+try:
+    import meld, pathlib
+    p = pathlib.Path(meld.__file__).resolve()
+    if any((p.parents[i]/'setup.py').exists() for i in range(4)):
+        print('__LOCAL_MELD_OK__')
+except Exception:
+    pass
+PY
+    then
+      echo "[meld] Using existing local MELD source (editable)" >&2
+    else
+      echo "[meld] Installing local MELD in editable mode from $LOCAL_MELD_REPO" >&2
+      pip install -e "$LOCAL_MELD_REPO" --no-deps >/dev/null 2>&1 || pip install -e "$LOCAL_MELD_REPO" --no-deps || echo "[meld] WARNING: Editable install failed; falling back to conda version" >&2
+    fi
+  else
+    echo "[meld] Local repo not found at $LOCAL_MELD_REPO (set USE_LOCAL_MELD=0 to skip)" >&2
+  fi
+fi
+
 # Optional CUDA module (only if modules system present)
 if command -v module &>/dev/null; then
   if module avail 2>&1 | grep -qi cuda; then

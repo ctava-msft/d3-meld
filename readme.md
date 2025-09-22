@@ -245,3 +245,114 @@ python blob_upload.py --managed-identity --account-name "$ACCOUNT_NAME" --contai
 See the docs file for: concurrency tuning, conditional uploads, content-type detection, tenant validation, exit codes, troubleshooting, and performance tips.
 
 
+
+```mermaid
+graph TD
+    subgraph Node1[Node-A100]
+        GPU0_1[GPU 0]
+        GPU1_1[GPU 1]
+        GPU2_1[GPU 2]
+        GPU3_1[GPU 3]
+
+        GPU0_1 --> L13[Leader 13]
+        GPU0_1 --> W37[Worker 37]
+        GPU0_1 --> W38[Worker 38]
+        GPU0_1 --> W39[Worker 39]
+
+        GPU1_1 --> L14[Leader 14]
+        GPU1_1 --> W40[Worker 40]
+        GPU1_1 --> W41[Worker 41]
+        GPU1_1 --> W42[Worker 42]
+
+        GPU2_1 --> L15[Leader 15]
+        GPU2_1 --> W43[Worker 43]
+        GPU2_1 --> W44[Worker 44]
+        GPU2_1 --> W45[Worker 45]
+
+        GPU3_1 --> L16[Leader 16]
+        GPU3_1 --> W46[Worker 46]
+        GPU3_1 --> W47[Worker 47]
+        GPU3_1 --> W48[Worker 48]
+    end
+
+    subgraph Node2[Node-A100]
+        GPU0_2[GPU 0]
+        GPU1_2[GPU 1]
+        GPU2_2[GPU 2]
+        GPU3_2[GPU 3]
+
+        GPU0_2 --> L9[Leader 9]
+        GPU0_2 --> W25[Worker 25]
+        GPU0_2 --> W26[Worker 26]
+        GPU0_2 --> W27[Worker 27]
+
+        GPU1_2 --> L10[Leader 10]
+        GPU1_2 --> W28[Worker 28]
+        GPU1_2 --> W29[Worker 29]
+        GPU1_2 --> W30[Worker 30]
+
+        GPU2_2 --> L11[Leader 11]
+        GPU2_2 --> W31[Worker 31]
+        GPU2_2 --> W32[Worker 32]
+        GPU2_2 --> W33[Worker 33]
+
+        GPU3_2 --> L12[Leader 12]
+        GPU3_2 --> W34[Worker 34]
+        GPU3_2 --> W35[Worker 35]
+        GPU3_2 --> W36[Worker 36]
+    end
+
+    subgraph Node3[Node-A100]
+        GPU0_3[GPU 0]
+        GPU1_3[GPU 1]
+        GPU2_3[GPU 2]
+        GPU3_3[GPU 3]
+
+        GPU0_3 --> L5[Leader 5]
+        GPU0_3 --> W13[Worker 13]
+        GPU0_3 --> W14[Worker 14]
+        GPU0_3 --> W15[Worker 15]
+
+        GPU1_3 --> L6[Leader 6]
+        GPU1_3 --> W16[Worker 16]
+        GPU1_3 --> W17[Worker 17]
+        GPU1_3 --> W18[Worker 18]
+
+        GPU2_3 --> L7[Leader 7]
+        GPU2_3 --> W19[Worker 19]
+        GPU2_3 --> W20[Worker 20]
+        GPU2_3 --> W21[Worker 21]
+
+        GPU3_3 --> L8[Leader 8]
+        GPU3_3 --> W22[Worker 22]
+        GPU3_3 --> W23[Worker 23]
+        GPU3_3 --> W24[Worker 24]
+    end
+
+    subgraph Node4[Node-A100]
+        GPU0_4[GPU 0]
+        GPU1_4[GPU 1]
+        GPU2_4[GPU 2]
+        GPU3_4[GPU 3]
+
+        GPU0_4 --> L1[Leader 1]
+        GPU0_4 --> W1[Worker 1]
+        GPU0_4 --> W2[Worker 2]
+        GPU0_4 --> W3[Worker 3]
+
+        GPU1_4 --> L2[Leader 2]
+        GPU1_4 --> W4[Worker 4]
+        GPU1_4 --> W5[Worker 5]
+        GPU1_4 --> W6[Worker 6]
+
+        GPU2_4 --> L3[Leader 3]
+        GPU2_4 --> W7[Worker 7]
+        GPU2_4 --> W8[Worker 8]
+        GPU2_4 --> W9[Worker 9]
+
+        GPU3_4 --> L4[Leader 4]
+        GPU3_4 --> W10[Worker 10]
+        GPU3_4 --> W11[Worker 11]
+        GPU3_4 --> W12[Worker 12]
+    end
+```
