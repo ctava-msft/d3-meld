@@ -195,7 +195,20 @@ class MPICommunicator(interfaces.ICommunicator):
         ):
             blocks = self._mpi_comm.gather(state_on_leader, root=0)
 
-        return self._from_blocks(blocks)
+        flat = self._from_blocks(blocks)
+        # Guard against accidental nested singleton lists (e.g., [[State], [State]])
+        flat = [s for s in flat if not (isinstance(s, list) and len(s) == 0)]  # drop empty
+        # Unwrap any inner single-element lists
+        normalized = []
+        for s in flat:
+            if isinstance(s, list):
+                if len(s) == 1:
+                    normalized.append(s[0])
+                else:
+                    normalized.extend(s)
+            else:
+                normalized.append(s)
+        return normalized
 
     @util.log_timing(logger)
     def send_states_to_leader(self, block: Sequence[interfaces.IState]) -> None:
@@ -205,6 +218,9 @@ class MPICommunicator(interfaces.ICommunicator):
         Args:
             block: block of states to send to the leader.
         """
+        # Normalize block to avoid nested list-of-list artifacts
+        if isinstance(block, list) and len(block) == 1 and isinstance(block[0], list):
+            block = block[0]
         with _timeout(
             self._timeout,
             RuntimeError(self._timeout_message.format("send_states_to_leader")),
@@ -565,6 +581,17 @@ class MPICommunicator(interfaces.ICommunicator):
         blocks = list(blocks)
         return [item for sublist in blocks for item in sublist]
 
+    # ---- Added helpers to ensure flat state lists ----
+    def _flatten_deep_once(self, obj):
+        # Flattens one level if list-of-lists of non-lists; leaves list[State] unchanged.
+        if isinstance(obj, list) and obj and all(isinstance(x, list) for x in obj):
+            if not any(isinstance(xx, list) for sub in obj for xx in (sub if isinstance(sub, list) else [])):
+                flat = []
+                for sub in obj:
+                    flat.extend(sub)
+                return flat
+        return obj
+
     # ---- Backward compatibility shims (revised again: always flat lists of primitives / states) ----
     def _normalize_state_block(self, block):
         # If block is a list whose elements are lists (one extra nesting), flatten one level.
@@ -585,14 +612,23 @@ class MPICommunicator(interfaces.ICommunicator):
     # State distribution (always return flat list[SystemState])
     def broadcast_states_to_workers(self, all_states):
         block = self.distribute_states_to_workers(all_states)
-        return self._normalize_state_block(block)
+        block = self._flatten_deep_once(block)
+        # If still nested singleton, unwrap
+        if isinstance(block, list) and len(block) == 1 and isinstance(block[0], list):
+            block = block[0]
+        return block if isinstance(block, list) else [block]
 
     def receive_state_from_leader(self):
         block = self.receive_states_from_leader()
-        return self._normalize_state_block(block)
+        block = self._flatten_deep_once(block)
+        if isinstance(block, list) and len(block) == 1 and isinstance(block[0], list):
+            block = block[0]
+        return block if isinstance(block, list) else [block]
 
     def send_state_to_leader(self, state):
-        # Accept single state or list; underlying method expects list
+        # Accept single state or list; avoid double wrapping
+        if isinstance(state, list) and len(state) == 1 and isinstance(state[0], list):
+            state = state[0]
         if not isinstance(state, list):
             state = [state]
         return self.send_states_to_leader(state)
