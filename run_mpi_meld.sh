@@ -116,8 +116,7 @@ activate_conda() {
     if ! python - <<'PY' >/dev/null 2>&1; then
 import openmm
 PY
-    then
-      echo "[warn] openmm not importable after pip install; install via: conda install -c conda-forge openmm" >&2
+    echo "[warn] openmm not importable after pip install; install via: conda install -c conda-forge openmm" >&2
     fi
   else
     echo "[setup] requirements.txt not found; skipping pip bulk install" >&2
