@@ -21,27 +21,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence, TypeVar
 
 import numpy as np  # type: ignore
 
-# TRY NORMAL MELD IMPORTS, FALL BACK TO LIGHTWEIGHT STUBS FOR MONKEY PATCH USE
-try:
-    from meld import interfaces, util  # type: ignore
-except Exception:  # pragma: no cover - fallback path
-    class _NoOpInterfaces:
-        class ICommunicator:  # minimal placeholder
-            pass
-        class IState:  # minimal placeholder
-            pass
-    class _NoOpUtil:
-        @staticmethod
-        def log_timing(_logger):
-            def deco(fn):
-                return fn
-            return deco
-    interfaces = _NoOpInterfaces()            # type: ignore
-    util = _NoOpUtil()                        # type: ignore
-    logging.getLogger(__name__).warning(
-        "Running comm.py standalone: using fallback interfaces/util stubs."
-    )
-
+from . import interfaces, util
 
 logger = logging.getLogger(__name__)
 
@@ -708,7 +688,6 @@ def _bootstrap():
                 "programs that use SIGALRM."
             )
 
-    @contextlib.contextmanager
     def timeout(seconds, exception):
         if threading.currentThread().name != "MainThread":
             raise _StateException(
@@ -738,15 +717,29 @@ def _bootstrap():
                     # cancel our timer
                     signal.setitimer(signal.ITIMER_REAL, 0)
                     timers.pop()
-                    if len(timers) > depth:
-                        timeleft = timers[-1].expiration - time.time()
-                        if timeleft > 0:
-                            signal.setitimer(signal.ITIMER_REAL, timeleft)
+                    if timers:
+                        # reinstall the parent timer
+                        parenttimeleft = timers[-1].expiration - time.time()
+                        if parenttimeleft > 0:
+                            signal.setitimer(signal.ITIMER_REAL, parenttimeleft)
                         else:
+                            # the parent timer has expired, trigger the handler
                             handler()
         else:
-            yield
+            # not enough time left on the parent timer
+            try:
+                quota._start()
+                yield
+            finally:
+                quota._stop()
 
-    return timeout
+    @contextlib.contextmanager
+    def timeout_context_manager(seconds, exception):
+        t = timeout(seconds, exception)
+        next(t)
+        yield
+
+    return timeout_context_manager
+
 
 _timeout = _bootstrap()
