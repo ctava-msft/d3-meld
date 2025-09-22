@@ -158,15 +158,49 @@ if not patch_dir.is_dir():
         sys.exit(97)
     sys.exit(0)
 
+def _find_meld_root():
+  for p in map(pathlib.Path, sys.path):
+    cand = p / 'meld' / '__init__.py'
+    if cand.exists():
+      return cand.parent
+  return None
+
+meld_root = None
 try:
+  import meld  # noqa
+  meld_root = pathlib.Path(meld.__file__).parent
+except Exception as e_first:
+  # Attempt bootstrap if failure appears related to gameld import (seen in upstream worker)
+  reason = str(e_first)
+  print(f"[patch] initial import meld failed: {reason}", file=sys.stderr)
+  root_guess = _find_meld_root()
+  if root_guess:
+    gameld_src = patch_dir / 'gameld.py'
+    gameld_dest = root_guess / 'system' / 'gameld.py'
+    try:
+      if gameld_src.exists():
+        gameld_dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(gameld_src, gameld_dest)
+        print(f"[patch-bootstrap] pre-copied gameld.py -> {gameld_dest}", file=sys.stderr)
+    except Exception as boot_e:
+      print(f"[patch-bootstrap] failed to pre-copy gameld.py: {boot_e}", file=sys.stderr)
+  # Second attempt
+  try:
     import meld  # noqa
-except Exception as e:
-    print(f"[patch] Could not import meld: {e}", file=sys.stderr)
+    meld_root = pathlib.Path(meld.__file__).parent
+    print("[patch] meld import succeeded after gameld bootstrap", file=sys.stderr)
+  except Exception as e_second:
+    print(f"[patch] Could not import meld after bootstrap: {e_second}", file=sys.stderr)
     if req:
-        sys.exit(97)
+      sys.exit(97)
     sys.exit(0)
 
-meld_root = pathlib.Path(meld.__file__).parent
+if meld_root is None:
+  # Fallback: cannot proceed
+  print('[patch] ERROR: meld_root unresolved', file=sys.stderr)
+  if req:
+    sys.exit(97)
+  sys.exit(0)
 targets = [
   ('comm.py', patch_dir / 'comm.py', meld_root / 'comm.py', True),
   ('leader.py', patch_dir / 'leader.py', meld_root / 'remd' / 'leader.py', False),
