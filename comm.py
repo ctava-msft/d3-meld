@@ -691,7 +691,7 @@ def _bootstrap():
     def timeout(seconds, exception):
         if threading.currentThread().name != "MainThread":
             raise _StateException(
-                "Interruptingcow can only be used from the " "MainThread."
+                "Interruptingcow can only be used from the MainThread."
             )
         if isinstance(seconds, _Quota):
             quota = seconds
@@ -735,6 +735,7 @@ def _bootstrap():
 
     @contextlib.contextmanager
     def timeout_context_manager(seconds, exception):
+        # Wrapper retaining original logic; only indentation normalized.
         t = timeout(seconds, exception)
         next(t)
         yield
