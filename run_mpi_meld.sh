@@ -109,6 +109,20 @@ activate_conda() {
   fi
   conda activate "$ENV_NAME"
 
+  # NEW: Install supplemental pip requirements (mirrors conda.yaml) before local MELD editable install.
+  if [[ -f requirements.txt ]]; then
+    echo "[setup] Installing pip requirements from requirements.txt" >&2
+    pip install -r requirements.txt
+    if ! python - <<'PY' >/dev/null 2>&1; then
+import openmm
+PY
+    then
+      echo "[warn] openmm not importable after pip install; install via: conda install -c conda-forge openmm" >&2
+    fi
+  else
+    echo "[setup] requirements.txt not found; skipping pip bulk install" >&2
+  fi
+
   # Prefer local Git repo version of MELD (sibling directory ../meld) over conda package
   # Set USE_LOCAL_MELD=0 to disable. Performs editable install if not already active.
   if [[ "${USE_LOCAL_MELD:-1}" == "1" ]]; then
