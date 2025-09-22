@@ -602,33 +602,39 @@ class MPICommunicator(interfaces.ICommunicator):
             return flat
         return block
 
+    def _unnest_single(self, block):
+        # Recursively unwrap single-element list layers
+        while isinstance(block, list) and len(block) == 1 and isinstance(block[0], list):
+            block = block[0]
+        return block
+
     # Alpha distribution (always return list[float])
     def broadcast_alphas_to_workers(self, all_alphas):
-        return self.distribute_alphas_to_workers(all_alphas)
+        alphas = self.distribute_alphas_to_workers(all_alphas)
+        alphas = self._unnest_single(alphas)
+        return alphas if isinstance(alphas, list) else [alphas]
 
     def receive_alpha_from_leader(self):
-        return self.receive_alphas_from_leader()
+        alphas = self.receive_alphas_from_leader()
+        alphas = self._unnest_single(alphas)
+        return alphas if isinstance(alphas, list) else [alphas]
 
     # State distribution (always return flat list[SystemState])
     def broadcast_states_to_workers(self, all_states):
         block = self.distribute_states_to_workers(all_states)
         block = self._flatten_deep_once(block)
-        # If still nested singleton, unwrap
-        if isinstance(block, list) and len(block) == 1 and isinstance(block[0], list):
-            block = block[0]
+        block = self._unnest_single(block)
         return block if isinstance(block, list) else [block]
 
     def receive_state_from_leader(self):
         block = self.receive_states_from_leader()
         block = self._flatten_deep_once(block)
-        if isinstance(block, list) and len(block) == 1 and isinstance(block[0], list):
-            block = block[0]
+        block = self._unnest_single(block)
         return block if isinstance(block, list) else [block]
 
     def send_state_to_leader(self, state):
-        # Accept single state or list; avoid double wrapping
-        if isinstance(state, list) and len(state) == 1 and isinstance(state[0], list):
-            state = state[0]
+        # Accept single state or list; avoid double wrapping / nested [[state]]
+        state = self._unnest_single(state)
         if not isinstance(state, list):
             state = [state]
         return self.send_states_to_leader(state)
