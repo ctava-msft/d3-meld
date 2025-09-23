@@ -4,10 +4,15 @@ channels:
   - bioconda
 
 dependencies:
+  # Python version intentionally kept at 3.10 for widest CUDA/OpenMM/MPI compatibility.
+  # (If upgrading later, test 3.12 in a separate env before replacing.)
   - python=3.10
   - pip
   - openmm
-  # mpi4py will pull in msmpi (Windows) or openmpi (Linux) automatically.
+  # Explicit MPI stack to ensure mpirun presence on Linux. On Windows native,
+  # openmpi packages are skipped; consider WSL2 for multi-rank GPU jobs.
+  - openmpi>=4.1,<5
+  - ucx>=1.14  # required for CUDA-aware OpenMPI builds (RDMA/UCX path)
   - mpi4py
   - meld
   - mdtraj
@@ -17,3 +22,6 @@ dependencies:
   - parmed
   - cudatoolkit
   - python-dotenv>=1.0
+  # Optional: uncomment for troubleshooting performance / profiling
+  # - numba
+  # - line_profiler
