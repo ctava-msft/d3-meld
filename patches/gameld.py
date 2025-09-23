@@ -7,7 +7,7 @@ References:
     M. Caparotta, A. Perez, When MELD meets GaMD: Accelerating Biomolecular Landscape Exploration.
 """
 
-from . import interfaces
+from .. import interfaces
 import numpy as np
 from typing import List
 import os

@@ -12,7 +12,7 @@ from typing import Sequence
 import numpy as np
 from meld import interfaces
 try:
-    from meld.system import gameld  # type: ignore
+    from ..system import gameld  # type: ignore
 except Exception:  # pragma: no cover
     gameld = None  # fallback when gameld module not present
 
