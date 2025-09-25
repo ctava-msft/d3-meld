@@ -569,10 +569,6 @@ if [[ -n "$EXTRA_MPI_ARGS" ]]; then
   EXTRA_SPLIT=($EXTRA_MPI_ARGS)
   MPI_CMD+=("${EXTRA_SPLIT[@]}")
 fi
-MPI_CMD+=(bash run_gpu_meld.sh "$PY_EXEC" "$LAUNCH_SCRIPT" --multiplex-factor "$MULTIPLEX_FACTOR")
-if [[ $ALLOW_PARTIAL -eq 1 ]]; then
-  MPI_CMD+=(--allow-partial)
-fi
 
 echo "[cmd] ${MPI_CMD[*]}" >&2
 if [[ $DRY_RUN -eq 1 ]]; then
