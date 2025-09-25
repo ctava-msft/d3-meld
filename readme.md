@@ -47,6 +47,25 @@ CLIENT_ID=your-managed-identity-client-id
 python blob_upload.py --managed-identity --mi-client-id "$CLIENT_ID" --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path ./Data/trajectory.pdb --destination .
 ```
 
+# Extracting Trajectories
+
+After the run, iterate through the specified replica indices and output files to convert each replica’s sampled frames into individual trajectory files. This loop invokes the extractor for every replica so downstream analysis tools can consume per-replica DCD trajectories.
+
+conda activate d3-meld-2-env 
+
+```
+for index in $(seq 0 3 30); do
+
+filename=$((300 + 3 * index)).dcd
+
+echo "Running: extract_trajectory extract_traj_dcd --replica $index $filename"
+
+extract_trajectory extract_traj_dcd --replica "$index" "$filename"
+
+done
+
+```
+
 # Patch Development
 
 ## Environment setup
