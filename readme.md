@@ -7,9 +7,13 @@ This repository wraps the end-to-end MELD workflow so you can define a simulatio
 # Setup Compute Resources
 
 - Create an Azure Machine Learning workspace.
+- Create a User Managed Identity.
 - Request quota for A100 in that region.
 - Create Compute Instance within that AML workspace.
   Be sure to include a ssh option using a publickey/privatekey that you have local.
+- Assign the User Managed Identity to the Compute Instance.
+- In the Storage Account associated with the workspace, assign that User Managed Identity Blob Store Data Contributor. This way you'll be able to upload localfiles into the cloud blob store.
+
 
 # Run MELD in MPI Mode
 
@@ -18,26 +22,29 @@ This repository wraps the end-to-end MELD workflow so you can define a simulatio
 - cd into the d3-meld folder
 - cp .env.sample .env
 - vi .env, edit and save the file
-- execute the following command:
+- execute the following command (s):
+  `chmod +x run_mpi_meld.sh`
+
   ```nohup bash -lc "./run_mpi_meld.sh --gpus 0,1,2,3 --np 30  --allow-oversubscribe --verify-comm --meld-debug-comm --require-comm-patch" > remd_mpigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
+
+  * if this is the first time you are executing the program include the flag --auto-install-mpi
 
 # Monitoring
 
 - Check GPU utilization:
 ```nvidia-smi```
 
-- Check replica exchnage:
-```grep 'Running replica exchange step ' ./remd.log | tail -n 40```
+- Check replica exchange:
+```grep 'Running replica exchange step ' ./remd_000.log | tail -n 40```
 
 
-# Blob Upload (Azure)
-
-az login
+# Blob Upload
 
 ```bash
-ACCOUNT_NAME=yourstorageacct \
-BLOB_CONTAINER=your-container \
-python blob_upload.py --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path path/to/file.dat
+ACCOUNT_NAME=yourstorageacct
+BLOB_CONTAINER=your-container
+CLIENT_ID=your-managed-identity-client-id
+python blob_upload.py --managed-identity --mi-client-id "$CLIENT_ID" --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path ./Data/trajectory.pdb --destination .
 ```
 
 # Patch Development
