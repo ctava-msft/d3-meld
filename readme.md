@@ -21,11 +21,7 @@ This repository wraps the end-to-end MELD workflow so you can define a simulatio
 - execute the following command:
   ```nohup bash -lc "./run_mpi_meld.sh --gpus 0,1,2,3 --np 30  --allow-oversubscribe --verify-comm --meld-debug-comm --require-comm-patch" > remd_mpigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
-# Upload trajectory file
-
-
-
-## Monitoring
+# Monitoring
 
 - Check GPU utilization:
 ```nvidia-smi```
@@ -34,7 +30,7 @@ This repository wraps the end-to-end MELD workflow so you can define a simulatio
 ```grep 'Running replica exchange step ' ./remd.log | tail -n 40```
 
 
-## Blob Upload (Azure)
+# Blob Upload (Azure)
 
 az login
 
@@ -42,7 +38,7 @@ az login
 ACCOUNT_NAME=yourstorageacct \
 BLOB_CONTAINER=your-container \
 python blob_upload.py --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path path/to/file.dat
-
+```
 
 # Patch Development
 
