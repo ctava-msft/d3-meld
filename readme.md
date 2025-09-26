@@ -56,17 +56,29 @@ After the run, iterate through the specified replica indices and output files to
 conda activate d3-meld-2-env 
 cp run_options.dat ./backup
 
-```
+```bash
+# First, run the restore and patch script to fix the solvation attribute issue
+python restore_and_patch.py
+
+# Then extract trajectories
 for index in $(seq 0 3 30); do
-
-filename=$((300 + 3 * index)).dcd
-
-echo "Running: extract_trajectory extract_traj_dcd --replica $index $filename"
-
-extract_trajectory extract_traj_dcd --replica "$index" "$filename"
-
+    filename=$((300 + 3 * index)).dcd
+    echo "Running: extract_trajectory extract_traj_dcd --replica $index $filename"
+    
+    # Use the fixed wrapper if the regular command fails
+    python extract_trajectory_fixed.py extract_traj_dcd --replica "$index" "$filename" || \
+    extract_trajectory extract_traj_dcd --replica "$index" "$filename"
 done
+```
 
+**Alternative approach if you encounter solvation attribute errors:**
+```bash
+# Use the Python wrapper that patches MELD at runtime
+for index in $(seq 0 3 30); do
+    filename=$((300 + 3 * index)).dcd
+    echo "Running: python extract_trajectory_fixed.py extract_traj_dcd --replica $index $filename"
+    python extract_trajectory_fixed.py extract_traj_dcd --replica "$index" "$filename"
+done
 ```
 
 # Patch Development
