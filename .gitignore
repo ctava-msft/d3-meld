@@ -8,3 +8,4 @@ Runs/
 .env
 docs
 .history/
+__pycache__/

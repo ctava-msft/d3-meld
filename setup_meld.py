@@ -230,6 +230,15 @@ def exec_meld_run():
         timesteps=cfg.timesteps,
         minimize_steps=cfg.minimize_steps,
     )
+
+    # Persist solvation metadata so downstream tools (e.g. extract_trajectory) can discover it
+    _solvation_value = getattr(cfg, "solvation_mode", os.getenv("SOLVATION_MODE", "implicit"))
+    for attr_name in ("solvation", "sonation"):  # the latter matches historical typo usage
+        try:
+            setattr(options, attr_name, _solvation_value)
+        except AttributeError:
+            pass
+
     # DataStore initialization
     store = vault.DataStore(gen_state(s, 0, cfg), cfg.n_replicas, s.get_pdb_writer(), block_size=cfg.block_size)
     store.initialize(mode='w')
