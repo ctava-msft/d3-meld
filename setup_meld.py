@@ -221,7 +221,7 @@ def exec_meld_run():
             setattr(
                 meld.RunOptions,
                 "solvation",
-                property(lambda self: os.getenv("SOLVATION_MODE", "implicit")),
+                property(lambda self: os.getenv("SOLVATION_MODE", "explicit")),
             )
         except Exception:
             pass
@@ -232,7 +232,7 @@ def exec_meld_run():
     )
 
     # Persist solvation metadata so downstream tools (e.g. extract_trajectory) can discover it
-    _solvation_value = getattr(cfg, "solvation_mode", os.getenv("SOLVATION_MODE", "implicit"))
+    _solvation_value = getattr(cfg, "solvation_mode", os.getenv("SOLVATION_MODE", "explicit"))
     for attr_name in ("solvation", "sonation"):  # the latter matches historical typo usage
         try:
             setattr(options, attr_name, _solvation_value)

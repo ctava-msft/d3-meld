@@ -81,5 +81,5 @@ def load_simulation_config(env_path: str | None = None) -> SimulationConfig:
         ramp_start_weight=_get_float("RAMP_START_WEIGHT", 1e-3),
         ramp_end_weight=_get_float("RAMP_END_WEIGHT", 1.0),
         ramp_factor=_get_float("RAMP_FACTOR", 4.0),
-        solvation_mode=os.getenv("SOLVATION_MODE", "implicit"),
+        solvation_mode=os.getenv("SOLVATION_MODE", "explicit"),
     )

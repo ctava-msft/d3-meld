@@ -54,6 +54,7 @@ python blob_upload.py --managed-identity --mi-client-id "$CLIENT_ID" --account-n
 After the run, iterate through the specified replica indices and output files to convert each replica’s sampled frames into individual trajectory files. This loop invokes the extractor for every replica so downstream analysis tools can consume per-replica DCD trajectories.
 
 conda activate d3-meld-2-env 
+cp run_options.dat ./backup
 
 ```
 for index in $(seq 0 3 30); do
