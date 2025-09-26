@@ -64,23 +64,15 @@ def patch_datastore(store_path: Path, solvation_mode: str, backup: bool = True, 
         with open(store_path, 'rb') as f:
             store_data = pickle.load(f)
         
-        # The store_data should be a DataStore object
+        # The store_data is a DataStore object with load_run_options() method
         print(f"[patch] Store data type: {type(store_data)}")
-        print("[patch] Extracting RunOptions from DataStore object...")
+        print("[patch] Loading RunOptions using DataStore.load_run_options()...")
         
-        # Try different attribute names that might contain RunOptions
-        options = None
-        for attr_name in ['_run_options', 'run_options', '_options']:
-            if hasattr(store_data, attr_name):
-                options = getattr(store_data, attr_name)
-                print(f"[patch] Found RunOptions at attribute: {attr_name}")
-                break
-        
-        if options is None:
-            # List all attributes to help debug
-            attrs = [name for name in dir(store_data) if not name.startswith('__')]
-            print(f"[patch] Available attributes: {attrs}")
-            print("[patch] ERROR: Could not find RunOptions in DataStore")
+        try:
+            options = store_data.load_run_options()
+            print(f"[patch] Successfully loaded RunOptions: {type(options)}")
+        except Exception as e:
+            print(f"[patch] ERROR: Could not load RunOptions: {e}")
             return False
         
         # Check if solvation already exists
@@ -101,11 +93,13 @@ def patch_datastore(store_path: Path, solvation_mode: str, backup: bool = True, 
             except AttributeError as e:
                 print(f"[patch] Warning: Could not set {attr_name}: {e}")
         
-        # The options object has been modified in-place, so the store_data already contains the changes
-        # Save the patched DataStore back to the pickle file
-        print("[patch] Saving patched DataStore...")
-        with open(store_path, 'wb') as f:
-            pickle.dump(store_data, f)
+        # Save the patched RunOptions back using DataStore API
+        print("[patch] Saving patched RunOptions using DataStore.save_run_options()...")
+        store_data.save_run_options(options)
+        
+        # Also save the DataStore itself
+        print("[patch] Saving DataStore...")
+        store_data.save_data_store()
         
         print("[patch] DataStore patched successfully!")
         return True
