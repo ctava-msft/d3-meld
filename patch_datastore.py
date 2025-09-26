@@ -53,13 +53,27 @@ def patch_datastore(store_path: Path, solvation_mode: str, backup: bool = True, 
         return True
     
     try:
-        # Load the existing store
-        print("[patch] Loading existing DataStore...")
-        store = vault.DataStore.load(str(store_path))
+        # Create a DataStore instance and load from file
+        print("[patch] Creating DataStore instance...")
+        # DataStore constructor needs a template state, n_replicas, pdb_writer, block_size
+        # But we're just reading, so we can try to instantiate with minimal args
+        # Actually, let's use a different approach - read the pickle directly
         
-        # Load current run options
-        print("[patch] Loading RunOptions...")
-        options = store.load_run_options()
+        import pickle
+        print("[patch] Loading DataStore from pickle file...")
+        with open(store_path, 'rb') as f:
+            store_data = pickle.load(f)
+        
+        # The store_data should contain the run_options
+        print("[patch] Extracting RunOptions from store data...")
+        if hasattr(store_data, 'run_options'):
+            options = store_data.run_options
+        elif 'run_options' in store_data:
+            options = store_data['run_options']
+        else:
+            print("[patch] ERROR: Could not find run_options in store data")
+            print("[patch] Available keys:", list(store_data.keys()) if hasattr(store_data, 'keys') else 'no keys method')
+            return False
         
         # Check if solvation already exists
         existing_solvation = getattr(options, 'solvation', None)
@@ -79,10 +93,10 @@ def patch_datastore(store_path: Path, solvation_mode: str, backup: bool = True, 
             except AttributeError as e:
                 print(f"[patch] Warning: Could not set {attr_name}: {e}")
         
-        # Save the patched options back to the store
-        print("[patch] Saving patched RunOptions...")
-        store.save_run_options(options)
-        store.save_data_store()
+        # Save the patched options back to the pickle file
+        print("[patch] Saving patched DataStore...")
+        with open(store_path, 'wb') as f:
+            pickle.dump(store_data, f)
         
         print("[patch] DataStore patched successfully!")
         return True
