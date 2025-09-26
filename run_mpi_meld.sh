@@ -570,6 +570,15 @@ if [[ -n "$EXTRA_MPI_ARGS" ]]; then
   MPI_CMD+=("${EXTRA_SPLIT[@]}")
 fi
 
+PY_ARGS=("$PY_EXEC" "$LAUNCH_SCRIPT")
+if [[ -n "${MULTIPLEX_FACTOR:-}" ]] && [[ "$MULTIPLEX_FACTOR" != "1" ]]; then
+  PY_ARGS+=("--multiplex-factor" "$MULTIPLEX_FACTOR")
+fi
+if [[ $ALLOW_PARTIAL -eq 1 ]]; then
+  PY_ARGS+=("--allow-partial")
+fi
+MPI_CMD+=("${PY_ARGS[@]}")
+
 echo "[cmd] ${MPI_CMD[*]}" >&2
 if [[ $DRY_RUN -eq 1 ]]; then
   echo "[dry-run] Exiting before execution." >&2
