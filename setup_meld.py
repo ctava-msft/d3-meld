@@ -51,7 +51,11 @@ for _candidate in (
         _INPUT_SEARCH_DIRS.append(_candidate)
 
 def _resolve_input_path(path_value, *, description):
-    path_obj = Path(path_value).expanduser()
+    original_value = str(path_value)
+    normalized_value = original_value.strip()
+    if os.sep != '\\':
+        normalized_value = normalized_value.replace('\\', '/')
+    path_obj = Path(normalized_value).expanduser()
     candidates = [path_obj]
     if not path_obj.is_absolute():
         candidates.extend(base / path_obj for base in _INPUT_SEARCH_DIRS)
@@ -67,7 +71,7 @@ def _resolve_input_path(path_value, *, description):
     if path_obj.parent != Path('.'):
         search_roots.append(str(path_obj.parent.resolve()))
     search_roots.extend(str(base) for base in _INPUT_SEARCH_DIRS)
-    raise FileNotFoundError(f"{description} '{path_value}' not found; searched: {', '.join(dict.fromkeys(search_roots))}.")
+    raise FileNotFoundError(f"{description} '{original_value}' not found; searched: {', '.join(dict.fromkeys(search_roots))}.")
 
 def gen_state(s, index, cfg):
     """Generate a MELD state for replica index with appropriately scaled alpha."""
