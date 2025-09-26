@@ -57,19 +57,34 @@ conda activate d3-meld-2-env
 cp run_options.dat ./backup
 
 ```bash
-# First, run the restore and patch script to fix the solvation attribute issue
-python restore_and_patch.py
+# First, patch the RunOptions file to fix the solvation attribute issue
+python patch_run_options_direct.py
 
-# Then extract trajectories
+# Then extract trajectories (may need to adjust replica range based on actual data)
 for index in $(seq 0 3 30); do
     filename=$((300 + 3 * index)).dcd
     echo "Running: extract_trajectory extract_traj_dcd --replica $index $filename"
     
-    # Use the fixed wrapper if the regular command fails
+    # Use the fixed wrapper - solvation issue is resolved, but there may be other issues
     python extract_trajectory_fixed.py extract_traj_dcd --replica "$index" "$filename" || \
     extract_trajectory extract_traj_dcd --replica "$index" "$filename"
 done
 ```
+
+## Troubleshooting Trajectory Extraction
+
+**✅ Solvation attribute error fixed**: The `AttributeError: 'RunOptions' object has no attribute 'solvation'` issue has been resolved with the patch scripts.
+
+**⚠️ Progress bar error**: If you encounter `ValueError: Value out of range` from the progress bar, this usually means:
+- The replica has no data for the requested range
+- The start/end frame calculation is invalid
+- The replica index doesn't exist in your simulation
+
+**Debugging steps:**
+1. Check how many replicas were actually run: `ls Data/*.dcd | wc -l`
+2. Check available blocks: `ls Data/trajectory_*.dcd`
+3. Try a smaller replica range first: `seq 0 1 5` instead of `seq 0 3 30`
+4. Check the simulation logs for the actual number of completed steps
 
 **Alternative approach if you encounter solvation attribute errors:**
 ```bash
