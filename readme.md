@@ -25,6 +25,8 @@ This repository wraps the end-to-end MELD workflow so you can define a simulatio
 - execute the following command (s):
   `chmod +x run_mpi_meld.sh`
 
+  `conda activate d3-meld-2-env`
+
   ```nohup bash -lc "./run_mpi_meld.sh --gpus 0,1,2,3 --np 30  --allow-oversubscribe --verify-comm --meld-debug-comm --require-comm-patch" > remd_mpigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
   * if this is the first time you are executing the program include the flag --auto-install-mpi
