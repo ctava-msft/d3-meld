@@ -65,6 +65,8 @@ def _resolve_input_path(path_value, *, description):
                 break
     path_obj = Path(normalized_value).expanduser()
     candidates = [path_obj]
+    if not path_obj.is_absolute() and len(path_obj.parts) == 1:
+        candidates.append(Path('_inputs') / path_obj)
     if not path_obj.is_absolute():
         candidates.extend(base / path_obj for base in _INPUT_SEARCH_DIRS)
     seen = set()
