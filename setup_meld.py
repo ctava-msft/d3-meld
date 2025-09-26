@@ -55,6 +55,14 @@ def _resolve_input_path(path_value, *, description):
     normalized_value = original_value.strip()
     if os.sep != '\\':
         normalized_value = normalized_value.replace('\\', '/')
+    if normalized_value:
+        lower_value = normalized_value.lower()
+        for prefix in ("_inputs", "inputs"):
+            if lower_value.startswith(prefix):
+                remainder = normalized_value[len(prefix):]
+                if remainder and remainder[0] not in ('/', '\\'):
+                    normalized_value = normalized_value[:len(prefix)] + '/' + remainder
+                break
     path_obj = Path(normalized_value).expanduser()
     candidates = [path_obj]
     if not path_obj.is_absolute():
