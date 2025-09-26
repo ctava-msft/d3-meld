@@ -41,6 +41,34 @@ try:
 except ImportError:
     from config import load_simulation_config
 
+_INPUT_SEARCH_DIRS = []
+for _candidate in (
+    Path.cwd(),
+    Path(__file__).resolve().parent,
+    Path(__file__).resolve().parent / "_inputs",
+):
+    if _candidate not in _INPUT_SEARCH_DIRS:
+        _INPUT_SEARCH_DIRS.append(_candidate)
+
+def _resolve_input_path(path_value, *, description):
+    path_obj = Path(path_value).expanduser()
+    candidates = [path_obj]
+    if not path_obj.is_absolute():
+        candidates.extend(base / path_obj for base in _INPUT_SEARCH_DIRS)
+    seen = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_file():
+            return resolved
+    search_roots = []
+    if path_obj.parent != Path('.'):
+        search_roots.append(str(path_obj.parent.resolve()))
+    search_roots.extend(str(base) for base in _INPUT_SEARCH_DIRS)
+    raise FileNotFoundError(f"{description} '{path_value}' not found; searched: {', '.join(dict.fromkeys(search_roots))}.")
+
 def gen_state(s, index, cfg):
     """Generate a MELD state for replica index with appropriately scaled alpha."""
     state = s.get_state_template()
@@ -52,10 +80,16 @@ def exec_meld_run():
     cfg = load_simulation_config()  # Loads from .env (or defaults)
 
     # Load sequence (space-separated residue identifiers) from configured file
-    sequence = parse.get_sequence_from_AA1(filename=cfg.sequence_file)
+    sequence_path = _resolve_input_path(cfg.sequence_file, description="Sequence file")
+    sequence = parse.get_sequence_from_AA1(filename=str(sequence_path))
 
     # Build the system from configured PDB template
     templates = glob.glob(cfg.pdb_file)
+    if not templates and not Path(cfg.pdb_file).is_absolute():
+        alt_templates = []
+        for base in _INPUT_SEARCH_DIRS:
+            alt_templates.extend(glob.glob(str(base / cfg.pdb_file)))
+        templates = list(dict.fromkeys(alt_templates))
     if not templates:
         raise FileNotFoundError(f"PDB file pattern '{cfg.pdb_file}' did not match any files.")
     p = meld.AmberSubSystemFromPdbFile(templates[0])
@@ -99,25 +133,35 @@ def exec_meld_run():
         phi_count = 0
         psi_count = 0
 
-        if cfg.phi_file and Path(cfg.phi_file).is_file():
-            before = len(torison_restraints)
+        if cfg.phi_file:
             try:
-                torison_restraints.extend(process_phi_dat_file(cfg.phi_file, s, seq))
-                phi_count = len(torison_restraints) - before
-            except (IOError, ValueError) as e:
-                print(f"Warning: Failed to process phi file '{cfg.phi_file}': {e}")
+                phi_path = _resolve_input_path(cfg.phi_file, description="Phi torsion file")
+            except FileNotFoundError as exc:
+                print(f"Warning: {exc}")
+            else:
+                before = len(torison_restraints)
+                try:
+                    torison_restraints.extend(process_phi_dat_file(str(phi_path), s, seq))
+                    phi_count = len(torison_restraints) - before
+                except (IOError, ValueError) as e:
+                    print(f"Warning: Failed to process phi file '{phi_path}': {e}")
         else:
-            print(f"Warning: Phi file '{cfg.phi_file}' not found; skipping phi restraints.")
+            print("Warning: Phi file not configured; skipping phi restraints.")
 
-        if cfg.psi_file and Path(cfg.psi_file).is_file():
-            before = len(torison_restraints)
+        if cfg.psi_file:
             try:
-                torison_restraints.extend(process_psi_file(cfg.psi_file, s, seq))
-                psi_count = len(torison_restraints) - before
-            except (IOError, ValueError) as e:
-                print(f"Warning: Failed to process psi file '{cfg.psi_file}': {e}")
+                psi_path = _resolve_input_path(cfg.psi_file, description="Psi torsion file")
+            except FileNotFoundError as exc:
+                print(f"Warning: {exc}")
+            else:
+                before = len(torison_restraints)
+                try:
+                    torison_restraints.extend(process_psi_file(str(psi_path), s, seq))
+                    psi_count = len(torison_restraints) - before
+                except (IOError, ValueError) as e:
+                    print(f"Warning: Failed to process psi file '{psi_path}': {e}")
         else:
-            print(f"Warning: Psi file '{cfg.psi_file}' not found; skipping psi restraints.")
+            print("Warning: Psi file not configured; skipping psi restraints.")
 
         if torison_restraints:
             n_tors_keep = int(cfg.torsion_keep_fraction * len(torison_restraints))
@@ -135,21 +179,25 @@ def exec_meld_run():
 
         # Distance restraints (competitive groups via get_dist_restraints_protein)
         for dist_file in cfg.dist_files:
-            if not Path(dist_file).is_file():
-                print(f"Warning: Distance file '{dist_file}' not found; skipping.")
+            if not dist_file:
+                continue
+            try:
+                dist_path = _resolve_input_path(dist_file, description="Distance restraint file")
+            except FileNotFoundError as exc:
+                print(f"Warning: {exc}")
                 continue
             try:
                 dist_scaler = s.restraints.create_scaler('constant')
-                dist_rests = get_dist_restraints_protein(dist_file, s, dist_scaler, ramp, seq)
+                dist_rests = get_dist_restraints_protein(str(dist_path), s, dist_scaler, ramp, seq)
                 if dist_rests:
                     n_keep = int(cfg.distance_keep_fraction * len(dist_rests))
                     n_keep = max(1, min(len(dist_rests), n_keep))
                     s.restraints.add_selectively_active_collection(dist_rests, n_keep)
-                    print(f"Added {len(dist_rests)} distance restraints from '{dist_file}' (keeping {n_keep}).")
+                    print(f"Added {len(dist_rests)} distance restraints from '{dist_path}' (keeping {n_keep}).")
                 else:
-                    print(f"No restraints parsed from '{dist_file}'.")
+                    print(f"No restraints parsed from '{dist_path}'.")
             except (IOError, ValueError) as e:
-                print(f"Warning: Failed processing distance file '{dist_file}': {e}")
+                print(f"Warning: Failed processing distance file '{dist_path}': {e}")
     else:
         print("Restraints disabled by configuration (ENABLE_RESTRAINTS=false).")
 
