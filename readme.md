@@ -4,6 +4,18 @@ MELD (Modeling Employing Limited Data) is a Bayesian ensemble-refinement engine 
 
 This repository wraps the end-to-end MELD workflow so you can define a simulation in configuration files and launch it across multiple GPUs with MPI. The `config.py` module loads a `SimulationConfig` from environment variables (typically provided via a `.env` file), capturing inputs such as the template PDB, sequence, replica count, timesteps, and restraint datasets. Those configuration values drive both setup and production runs, ensuring every rank sees a consistent definition of the system.
 
+## New: Reinforcement Learning Integration
+
+This repository now includes reinforcement learning (RL) integration that allows adaptive control of MELD simulations using PPO (Proximal Policy Optimization) agents. The RL system can dynamically adjust simulation parameters to improve sampling efficiency.
+
+### RL Features
+
+- **Gymnasium Environment**: `MeldEnv` class implementing the standard RL environment interface
+- **PPO Agent Training**: Using Stable Baselines3 for policy optimization
+- **GPU Allocation**: RL agent runs on GPU 3, MELD replicas on GPUs 1-2
+- **Adaptive Control**: Dynamic adjustment of bias strength and other parameters
+- **TensorBoard Logging**: Real-time monitoring of training metrics
+
 # Setup Compute Resources
 
 - Create an Azure Machine Learning workspace.
@@ -30,6 +42,113 @@ This repository wraps the end-to-end MELD workflow so you can define a simulatio
   ```nohup bash -lc "./run_mpi_meld.sh --gpus 0,1,2,3 --np 30  --allow-oversubscribe --verify-comm --meld-debug-comm --require-comm-patch" > remd_mpigpu_$(date +%Y%m%d_%H%M%S).log 2>&1 &```
 
   * if this is the first time you are executing the program include the flag --auto-install-mpi
+
+# Reinforcement Learning Integration
+
+## Overview
+
+This repository includes reinforcement learning (RL) integration that allows adaptive control of MELD simulations using PPO (Proximal Policy Optimization) agents. The RL system can dynamically adjust simulation parameters to improve sampling efficiency.
+
+### RL Features
+- **Gymnasium Environment**: `MeldEnv` class implementing the standard RL environment interface
+- **PPO Agent Training**: Using Stable Baselines3 for policy optimization  
+- **GPU Allocation**: RL agent runs on GPU 3, MELD replicas on GPUs 1-2
+- **Adaptive Control**: Dynamic adjustment of bias strength and other parameters
+- **TensorBoard Logging**: Real-time monitoring of training metrics
+
+## Setup RL Environment
+
+First, install the additional RL dependencies:
+
+```bash
+pip install gymnasium stable-baselines3 torch tensorboard tqdm rich
+```
+
+## Quick Start
+
+Test the RL environment with a minimal training run:
+
+```bash
+# Test the MELD RL environment
+python test_meld_env.py
+
+# Run a short training session
+python train_rl_agent.py --total-timesteps 1000 --n-steps 50 --batch-size 25
+```
+
+## Full Training Configuration
+
+For production training with proper GPU allocation:
+
+```bash
+# Train PPO agent on GPU 3 while MELD uses GPUs 1-2
+python train_rl_agent.py \
+  --gpu-id 3 \
+  --total-timesteps 100000 \
+  --n-steps 2048 \
+  --batch-size 64 \
+  --checkpoint-freq 10000 \
+  --eval-freq 5000 \
+  --learning-rate 3e-4 \
+  --log-dir ./rl_logs \
+  --model-name ppo_meld_production
+```
+
+## Training Parameters
+
+Key parameters for `train_rl_agent.py`:
+
+- `--gpu-id`: GPU for RL training (default: 3)
+- `--total-timesteps`: Total training steps (default: 100000)
+- `--n-steps`: Steps per environment per update (default: 2048)
+- `--batch-size`: Training batch size (default: 64)
+- `--learning-rate`: PPO learning rate (default: 3e-4)
+- `--checkpoint-freq`: Save model every N steps (default: 10000)
+- `--eval-freq`: Evaluate model every N steps (default: 5000)
+
+## Monitoring Training
+
+View training progress with TensorBoard:
+
+```bash
+tensorboard --logdir ./logs/tensorboard
+```
+
+Key metrics to monitor:
+- `rollout/ep_rew_mean`: Average episode reward
+- `rollout/ep_len_mean`: Average episode length  
+- `train/policy_gradient_loss`: Policy optimization progress
+- `train/value_loss`: Value function learning
+
+## Environment Configuration
+
+The RL environment can be configured via environment variables or the config dictionary:
+
+```bash
+# Environment variables (in .env file)
+N_REPLICAS=30
+BLOCK_SIZE=50
+TIMESTEPS=25000
+MINIMIZE_STEPS=20000
+```
+
+The RL agent observes:
+- RMSD (Root Mean Square Deviation)
+- Energy (potential energy)
+- Temperature (simulation temperature)  
+- Exchange Rate (replica exchange success rate)
+
+The RL agent controls:
+- Bias Strength Multiplier (0.1 to 2.0)
+
+## GPU Allocation Strategy
+
+The RL integration follows this GPU allocation:
+- **GPU 0**: Leader process (MELD coordination)
+- **GPUs 1-2**: MELD worker replicas (29 replicas total)
+- **GPU 3**: RL agent training and inference
+
+This ensures the RL agent doesn't interfere with MELD's parallel execution.
 
 # Monitoring
 

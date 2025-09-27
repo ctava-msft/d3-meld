@@ -9,3 +9,9 @@ Runs/
 docs
 .history/
 __pycache__/
+
+# RL Training artifacts
+logs/
+*.zip
+*.tfevents.*
+*.csv
