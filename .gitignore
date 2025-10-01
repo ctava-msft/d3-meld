@@ -9,3 +9,4 @@ Runs/
 docs
 .history/
 __pycache__/
+*.dcd
