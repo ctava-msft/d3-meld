@@ -173,6 +173,12 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
+    # Also enable debug logging for azure.identity when in debug mode
+    if args.debug:
+        logging.getLogger('azure.identity').setLevel(logging.DEBUG)
+        logging.getLogger('azure.core').setLevel(logging.DEBUG)
+        logging.getLogger('msal').setLevel(logging.DEBUG)
+    
     logger.info("Starting blob upload script")
     logger.debug(f"Arguments: {vars(args)}")
     
@@ -193,6 +199,17 @@ def main():
         
         logger.debug(f"Tenant ID: {tenant_id or '(not specified)'}")
         
+        # Check for Azure ML environment
+        msi_endpoint = os.environ.get("MSI_ENDPOINT")
+        msi_secret = os.environ.get("MSI_SECRET")
+        identity_endpoint = os.environ.get("IDENTITY_ENDPOINT")
+        identity_header = os.environ.get("IDENTITY_HEADER")
+        
+        logger.debug(f"MSI_ENDPOINT: {msi_endpoint or '(not set)'}")
+        logger.debug(f"MSI_SECRET: {'(set)' if msi_secret else '(not set)'}")
+        logger.debug(f"IDENTITY_ENDPOINT: {identity_endpoint or '(not set)'}")
+        logger.debug(f"IDENTITY_HEADER: {'(set)' if identity_header else '(not set)'}")
+        
         try:
             if args.mi_client_id:
                 logger.debug(f"Using user-assigned managed identity: {args.mi_client_id}")
@@ -200,6 +217,29 @@ def main():
             else:
                 logger.debug("Using system-assigned managed identity")
                 credential = ManagedIdentityCredential()
+            
+            # Test token acquisition early to provide better error messages
+            logger.debug("Testing token acquisition...")
+            try:
+                test_token = credential.get_token("https://storage.azure.com/.default")
+                logger.debug(f"Successfully acquired test token (expires: {test_token.expires_on})")
+            except Exception as token_ex:
+                logger.error(f"Failed to acquire token with managed identity: {token_ex}", exc_info=True)
+                print(f"ERROR: Managed Identity authentication failed. Details:", file=sys.stderr)
+                print(f"  {token_ex}", file=sys.stderr)
+                if msi_endpoint:
+                    print(f"  Environment: Azure ML (MSI_ENDPOINT detected)", file=sys.stderr)
+                elif identity_endpoint:
+                    print(f"  Environment: App Service/Functions (IDENTITY_ENDPOINT detected)", file=sys.stderr)
+                else:
+                    print(f"  Environment: Unknown/Not configured", file=sys.stderr)
+                print(f"  Client ID: {args.mi_client_id or '(system-assigned)'}", file=sys.stderr)
+                print(f"\nTroubleshooting:", file=sys.stderr)
+                print(f"  1. Verify the managed identity is assigned to this resource", file=sys.stderr)
+                print(f"  2. Ensure the identity has 'Storage Blob Data Contributor' role on the storage account", file=sys.stderr)
+                print(f"  3. If using user-assigned MI, verify the client ID is correct", file=sys.stderr)
+                sys.exit(3)
+                
         except Exception as ex:  # pylint: disable=broad-except
             logger.error(f"Failed to initialize ManagedIdentityCredential: {ex}", exc_info=True)
             print(f"ERROR: Failed to initialize ManagedIdentityCredential: {ex}", file=sys.stderr)
@@ -289,9 +329,21 @@ def main():
             sys.exit(2)
         print(f"ERROR: Unable to access container '{args.container}': {hre}", file=sys.stderr)
         sys.exit(2)
+    except TypeError as type_err:
+        logger.error(f"Type error accessing container (likely MI token issue): {type_err}", exc_info=True)
+        print(f"ERROR: Authentication error with managed identity: {type_err}", file=sys.stderr)
+        print(f"This usually indicates an issue with the managed identity configuration or token format.", file=sys.stderr)
+        print(f"Try running with --debug flag for more details.", file=sys.stderr)
+        sys.exit(2)
     except Exception as ex:  # pylint: disable=broad-except
         logger.error(f"Unexpected error accessing container: {ex}", exc_info=True)
         print(f"ERROR: Unable to access container '{args.container}': {ex}", file=sys.stderr)
+        if "string indices must be integers" in str(ex):
+            print(f"This error suggests a problem with managed identity token acquisition.", file=sys.stderr)
+            print(f"Verify:", file=sys.stderr)
+            print(f"  - The managed identity is properly assigned", file=sys.stderr)
+            print(f"  - The identity has correct permissions on the storage account", file=sys.stderr)
+            print(f"  - You're using the correct client ID (if user-assigned)", file=sys.stderr)
         sys.exit(2)
 
     logger.info("Discovering files to upload")
