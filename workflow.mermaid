@@ -1,0 +1,25 @@
+flowchart TD
+    %% FGFR Structure Prediction and Binder Design Workflow
+    
+    A[Structure Prediction of all<br/>the isoforms of FGFR using AF3<br/>and RosettaFold] --> B[Conformational<br/>sampling using<br/>MELD]
+    
+    B --> C[Choosing<br/>structure after<br/>clustering]
+    
+    C --> D[Brownian Dynamics of<br/>the FGFR conformations<br/>with FGF, to get the<br/>most probable binding<br/>sites]
+    
+    C --> E[Running BoltzDesign on<br/>the FGFR structures for<br/>binder prediction. This<br/>will be an unbiased<br/>binder prediction]
+    
+    D --> F[Most probable<br/>binding sites in<br/>all the FGFR-FGF<br/>complexes]
+    
+    E --> G[FGFR - Binder<br/>complexes]
+    
+    F --> H[BD of FGFR + FGF + Binder]
+    G --> I[Filtering the results<br/>based on the<br/>knowledge of most<br/>probable binding site<br/>from BD]
+    
+    I --> H
+    
+    H --> J[Best performing<br/>binders]
+    
+    J --> K[Experimental<br/>validations]
+    
+    G -.-> F
