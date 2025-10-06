@@ -60,7 +60,9 @@ See [Extracting Trajectories](#extracting-trajectories) section below for detail
 ACCOUNT_NAME=yourstorageacct
 BLOB_CONTAINER=your-container
 CLIENT_ID=your-managed-identity-client-id
-python blob_upload.py --managed-identity --mi-client-id "$CLIENT_ID" --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path ./Data --destination ./MELD-FGFR2
+python blob_upload.py --managed-identity --mi-client-id "$CLIENT_ID" --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path ./Data --destination ./MELD-FGFR2-1
+
+python blob_upload.py --managed-identity --mi-client-id $CLIENT_ID --account-name $ACCOUNT_NAME --container $BLOB_CONTAINER --path ./Data --destination ./MELD-FGFR2-1
 ```
 
 # Extracting Trajectories
