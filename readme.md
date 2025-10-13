@@ -59,8 +59,8 @@ See [Extracting Trajectories](#extracting-trajectories) section below for detail
 ```bash
 ACCOUNT_NAME=yourstorageacct
 BLOB_CONTAINER=your-container
-CLIENT_ID=your-managed-identity-client-id
-python blob_upload.py --managed-identity --mi-client-id "$CLIENT_ID" --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path ./Data --destination ./MELD-FGFR2-1
+CLIENT_ID=your-managed-identity-client-id (obtain from User managed identity)
+python blob_upload.py --managed-identity --mi-client-id "$CLIENT_ID" --account-name "$ACCOUNT_NAME" --container "$BLOB_CONTAINER" --path ./*.dcd --destination ./MELD-FGFR2-1
 
 python blob_upload.py --managed-identity --mi-client-id $CLIENT_ID --account-name $ACCOUNT_NAME --container $BLOB_CONTAINER --path ./Data --destination ./MELD-FGFR2-1
 ```
@@ -158,7 +158,7 @@ cp run_options.dat ./backup
 
 After the run, iterate through the specified replica indices and output files to convert each replica’s sampled frames into individual trajectory files. This loop invokes the extractor for every replica so downstream analysis tools can consume per-replica DCD trajectories.
 
-conda activate d3-meld-2-env 
+conda activate d3-meld-3-env 
 
 
 extract_trajectory extract_traj_dcd --replica 10 trajectory.10.dcd
@@ -174,6 +174,8 @@ nohup extract_trajectory extract_traj_dcd --replica 30 trajectory.30.dcd > repli
 nohup extract_trajectory extract_traj_dcd --replica 40 trajectory.40.dcd > replica40.log 2>&1 &
 nohup extract_trajectory extract_traj_dcd --replica 50 trajectory.50.dcd > replica50.log 2>&1 &
 
+
+python extract_trajectory_fixed.py extract_traj_dcd --replica 10 trajectory.10.dcd
 
 cp run_options.dat ./backup
 

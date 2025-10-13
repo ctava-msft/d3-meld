@@ -1,6 +1,7 @@
 .venv
 analysis_output/
 Data/
+Data-0/
 Logs/
 Data-OLD/
 Logs-OLD/
