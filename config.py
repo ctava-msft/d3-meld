@@ -63,8 +63,8 @@ def load_simulation_config(env_path: str | None = None) -> SimulationConfig:
     else:
         load_dotenv(override=False)
     return SimulationConfig(
-        sequence_file=os.getenv("SEQUENCE_FILE", "prot_tleap_sequence.dat"),
-        pdb_file=os.getenv("PDB_FILE", "prot_tleap.pdb"),
+        sequence_file=os.getenv("SEQUENCE_FILE", "af3_tleap_sequence.dat"),
+        pdb_file=os.getenv("PDB_FILE", "af3_tleap.pdb"),
         n_replicas=_get_int("N_REPLICAS", 10),
         n_steps=_get_int("N_STEPS", 5),
         block_size=_get_int("BLOCK_SIZE", 5),
@@ -73,7 +73,7 @@ def load_simulation_config(env_path: str | None = None) -> SimulationConfig:
         enable_restraints=_get_bool("ENABLE_RESTRAINTS", True),
         phi_file=os.getenv("PHI_FILE", "phi.dat"),
         psi_file=os.getenv("PSI_FILE", "psi.dat"),
-        dist_files=[f.strip() for f in os.getenv("DIST_FILES", "40-249_CA_dist_bias.dat").split(',') if f.strip()],
+        dist_files=[f.strip() for f in os.getenv("DIST_FILES", "25-105_CA_dist_bias.dat,129-340_CA_dist_bias.dat").split(',') if f.strip()],
         torsion_keep_fraction=_get_float("TORSION_KEEP_FRACTION", 0.9),
         distance_keep_fraction=_get_float("DISTANCE_KEEP_FRACTION", 0.9),
         ramp_start_time=_get_int("RAMP_START_TIME", 1),
